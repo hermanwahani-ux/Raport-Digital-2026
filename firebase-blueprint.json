@@ -1,0 +1,117 @@
+{
+  "entities": {
+    "Profile": {
+      "title": "Profile",
+      "description": "Teacher profile configuration used across report printouts and classroom operations.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "className": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role", "className"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Student details including identity registration, parent connection, and school identification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "nisn": { "type": "string" },
+        "gender": { "type": "string" },
+        "email": { "type": "string" },
+        "parentName": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "className": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "nisn", "gender", "className"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Digital board notifications pushed to students and parents.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "targetAudience": { "type": "string" },
+        "date": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorEmail": { "type": "string" }
+      },
+      "required": ["id", "title", "content", "category", "targetAudience", "date"]
+    },
+    "Grade": {
+      "title": "Grade",
+      "description": "Academic scorecard for individual student containing grades per subject.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "subjects": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "subjects"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Daily attendance checkpoints tracking student logs.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "studentId", "date", "status"]
+    },
+    "UploadedReport": {
+      "title": "UploadedReport",
+      "description": "Secure file reference metadata pointing to Base64 encoded PDF student reports.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "uploadDate": { "type": "string" },
+        "fileData": { "type": "string" },
+        "uploadedBy": { "type": "string" }
+      },
+      "required": ["id", "studentId", "fileName", "fileSize", "uploadDate", "fileData"]
+    }
+  },
+  "firestore": {
+    "profiles/{profileId}": {
+      "schema": "Profile",
+      "description": "Class teacher profiles."
+    },
+    "students/{studentId}": {
+      "schema": "Student",
+      "description": "List of student records under the school database directory."
+    },
+    "announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Digital board broadcast messages."
+    },
+    "grades/{gradeId}": {
+      "schema": "Grade",
+      "description": "Individual student grades records."
+    },
+    "attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Daily attendance status markings."
+    },
+    "uploadedReports/{reportId}": {
+      "schema": "UploadedReport",
+      "description": "Base64 encoded PDF academic reports synced block storage representations."
+    }
+  }
+}

@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net: Default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Primitive Definition & Global Safety Gates
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    // Checking if the signed-in user belongs to school teacher domain or account
+    function isTeacher() {
+      return isSignedIn() && (
+        request.auth.token.email == 'herman@sekolah.sch.id' || 
+        request.auth.token.email.endsWith('@sekolah.sch.id') || 
+        request.auth.token.email.endsWith('@sch.id')
+      );
+    }
+
+    function isValidId(id) {
+       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Validation Blueprints (Anti-Update-Gap)
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['name', 'role', 'school', 'className', 'academicYear', 'avatar', 'email']) &&
+             data.keys().size() == 7 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role is string && data.role.size() <= 100 &&
+             data.school is string && data.school.size() <= 150 &&
+             data.className is string && data.className.size() <= 30 &&
+             data.academicYear is string && data.academicYear.size() <= 15 &&
+             data.avatar is string && data.avatar.size() <= 100000 &&
+             data.email is string && data.email.size() <= 100;
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'name', 'gender', 'nisn', 'avatar', 'email', 'parentName', 'parentPhone']) &&
+             (data.keys().size() == 8 || data.keys().size() == 9) &&
+             data.id is string && isValidId(data.id) &&
+             data.name is string && data.name.size() <= 100 &&
+             (data.gender == 'Laki-laki' || data.gender == 'Perempuan') &&
+             data.nisn is string && data.nisn.matches('^[0-9]{10}$') &&
+             data.avatar is string && data.avatar.size() <= 2000 &&
+             data.email is string && data.email.size() <= 100 &&
+             data.parentName is string && data.parentName.size() <= 100 &&
+             data.parentPhone is string && data.parentPhone.size() <= 30 &&
+             (!data.keys().hasAll(['className']) || (data.className is string && data.className.size() <= 30));
+    }
+
+    function isValidAnnouncement(data) {
+      return data.keys().hasAll(['id', 'title', 'content', 'date', 'category', 'target']) &&
+             data.keys().size() == 6 &&
+             data.id is string && isValidId(data.id) &&
+             data.title is string && data.title.size() <= 200 &&
+             data.content is string && data.content.size() <= 2000 &&
+             data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             (data.category == 'urgent' || data.category == 'umum' || data.category == 'akademik') &&
+             (data.target == 'ortu' || data.target == 'siswa' || data.target == 'semua');
+    }
+
+    function isValidGrade(data) {
+      return data.keys().hasAll(['studentId', 'grades']) &&
+             data.keys().size() == 2 &&
+             data.studentId is string && isValidId(data.studentId) &&
+             data.grades is map && 
+             data.grades.keys().hasAll(['matematika', 'ipa', 'ips', 'bahasaIndonesia', 'bahasaInggris']) &&
+             data.grades.matematika is int && data.grades.matematika >= 0 && data.grades.matematika <= 100 &&
+             data.grades.ipa is int && data.grades.ipa >= 0 && data.grades.ipa <= 100 &&
+             data.grades.ips is int && data.grades.ips >= 0 && data.grades.ips <= 100 &&
+             data.grades.bahasaIndonesia is int && data.grades.bahasaIndonesia >= 0 && data.grades.bahasaIndonesia <= 100 &&
+             data.grades.bahasaInggris is int && data.grades.bahasaInggris >= 0 && data.grades.bahasaInggris <= 100;
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['date', 'records']) &&
+             data.keys().size() == 2 &&
+             data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+             data.records is map;
+    }
+
+    function isValidUploadedReport(data) {
+      return data.keys().hasAll(['id', 'studentId', 'fileName', 'fileSize', 'uploadDate', 'fileData']) &&
+             data.keys().size() == 6 &&
+             data.id is string && isValidId(data.id) &&
+             data.studentId is string && isValidId(data.studentId) &&
+             data.fileName is string && data.fileName.size() <= 255 &&
+             data.fileSize is string && data.fileSize.size() <= 30 &&
+             data.uploadDate is string && data.uploadDate.size() <= 50 &&
+             data.fileData is string && data.fileData.size() <= 10000000; // Limit to ~10MB PDF chunks
+    }
+
+    // Teachers Profile Collection Rule
+    match /profiles/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidProfile(incoming());
+      allow update: if isSignedIn() && userId == request.auth.uid && isValidProfile(incoming());
+      allow delete: if false; // Profiles are permanent
+    }
+
+    // Students Collection Rule
+    match /students/{studentId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isTeacher() && isValidStudent(incoming()) && isValidId(studentId);
+      allow update: if isTeacher() && isValidStudent(incoming()) && isValidId(studentId);
+      allow delete: if isTeacher() && isValidId(studentId);
+    }
+
+    // Announcements Collection Rule
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow create: if isTeacher() && isValidAnnouncement(incoming()) && isValidId(announcementId);
+      allow update: if isTeacher() && isValidAnnouncement(incoming()) && isValidId(announcementId);
+      allow delete: if isTeacher() && isValidId(announcementId);
+    }
+
+    // Grades Collection Rule
+    match /grades/{gradeId} {
+      allow get: if isSignedIn() && (isTeacher() || existing().studentId == request.auth.uid);
+      allow list: if isSignedIn();
+      allow create: if isTeacher() && isValidGrade(incoming()) && isValidId(gradeId);
+      allow update: if isTeacher() && isValidGrade(incoming()) && isValidId(gradeId);
+      allow delete: if isTeacher() && isValidId(gradeId);
+    }
+
+    // Attendance Collection Rule
+    match /attendance/{attendanceId} {
+      allow read: if isSignedIn();
+      allow create: if isTeacher() && isValidAttendance(incoming()) && isValidId(attendanceId);
+      allow update: if isTeacher() && isValidAttendance(incoming()) && isValidId(attendanceId);
+      allow delete: if isTeacher() && isValidId(attendanceId);
+    }
+
+    // Uploaded PDF Reports Collection Rule
+    match /uploadedReports/{reportId} {
+      allow get: if isSignedIn() && (isTeacher() || existing().studentId == request.auth.uid);
+      allow list: if isSignedIn();
+      allow create: if isTeacher() && isValidUploadedReport(incoming()) && isValidId(reportId);
+      allow update: if isTeacher() && isValidUploadedReport(incoming()) && isValidId(reportId);
+      allow delete: if isTeacher() && isValidId(reportId);
+    }
+  }
+}
