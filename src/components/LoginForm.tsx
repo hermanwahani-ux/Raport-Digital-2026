@@ -29,16 +29,16 @@ interface LoginFormProps {
 
 export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
   // --- Teacher Login States ---
-  const [teacherEmail, setTeacherEmail] = useState('herman@sekolah.sch.id');
-  const [teacherPassword, setTeacherPassword] = useState('password123');
+  const [teacherEmail, setTeacherEmail] = useState('');
+  const [teacherPassword, setTeacherPassword] = useState('');
   const [showTeacherPassword, setShowTeacherPassword] = useState(false);
   const [teacherRememberMe, setTeacherRememberMe] = useState(true);
   const [teacherError, setTeacherError] = useState('');
   const [isTeacherLoading, setIsTeacherLoading] = useState(false);
 
   // --- Student Login States ---
-  const [studentNisn, setStudentNisn] = useState('0087452391'); // Default: Aditya Pratama
-  const [studentPassword, setStudentPassword] = useState('password123');
+  const [studentNisn, setStudentNisn] = useState(''); // Default: empty
+  const [studentPassword, setStudentPassword] = useState('');
   const [showStudentPassword, setShowStudentPassword] = useState(false);
   const [studentRememberMe, setStudentRememberMe] = useState(true);
   const [studentError, setStudentError] = useState('');
@@ -278,11 +278,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
               </form>
             </div>
 
-            {/* Bottom metadata */}
-            <div className="mt-6 pt-4 border-t border-slate-100 text-[10px] text-gray-455 text-gray-400">
-              <span className="font-bold text-gray-800">Akun Wali Kelas Demo:</span>
-              <p className="font-mono mt-0.5">herman@sekolah.sch.id / password123</p>
-            </div>
+
           </motion.div>
 
           {/* COLUMN 2: PORTAL SISWA MOCKUP (lg:col-span-8) - BUILT EXACTLY AS SHOWN IN THE HERO PREVIEW */}
