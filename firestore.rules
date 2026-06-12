@@ -17,7 +17,7 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\\\-]+$');
+       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
     }
 
     function incoming() {
@@ -44,12 +44,12 @@ service cloud.firestore {
 
     function isValidStudent(data) {
       return data.keys().hasAll(['id', 'name', 'gender', 'nisn', 'avatar', 'email', 'parentName', 'parentPhone']) &&
-             (data.keys().size() == 8 || data.keys().size() == 9) &&
+             data.keys().size() >= 8 && data.keys().size() <= 10 &&
              data.id is string && isValidId(data.id) &&
              data.name is string && data.name.size() <= 100 &&
              (data.gender == 'Laki-laki' || data.gender == 'Perempuan') &&
-             data.nisn is string && data.nisn.matches('^[0-9]{10}$') &&
-             data.avatar is string && data.avatar.size() <= 2000 &&
+             data.nisn is string && data.nisn.matches('^[0-9]+$') && data.nisn.size() <= 20 &&
+             data.avatar is string && data.avatar.size() <= 5000000 &&
              data.email is string && data.email.size() <= 100 &&
              data.parentName is string && data.parentName.size() <= 100 &&
              data.parentPhone is string && data.parentPhone.size() <= 30 &&
@@ -69,14 +69,14 @@ service cloud.firestore {
 
     function isValidGrade(data) {
       return data.keys().hasAll(['studentId', 'grades']) &&
-             data.keys().size() == 2 &&
+             data.keys().size() >= 2 && data.keys().size() <= 3 &&
              data.studentId is string && isValidId(data.studentId) &&
              data.grades is map && 
              data.grades.keys().hasAll(['muatanUmum', 'muatanKejuruan', 'mataPelajaranPilihan', 'kokurikuler']) &&
-             data.grades.muatanUmum is int && data.grades.muatanUmum >= 0 && data.grades.muatanUmum <= 100 &&
-             data.grades.muatanKejuruan is int && data.grades.muatanKejuruan >= 0 && data.grades.muatanKejuruan <= 100 &&
-             data.grades.mataPelajaranPilihan is int && data.grades.mataPelajaranPilihan >= 0 && data.grades.mataPelajaranPilihan <= 100 &&
-             data.grades.kokurikuler is int && data.grades.kokurikuler >= 0 && data.grades.kokurikuler <= 100;
+             data.grades.muatanUmum is number && data.grades.muatanUmum >= 0 && data.grades.muatanUmum <= 100 &&
+             data.grades.muatanKejuruan is number && data.grades.muatanKejuruan >= 0 && data.grades.muatanKejuruan <= 100 &&
+             data.grades.mataPelajaranPilihan is number && data.grades.mataPelajaranPilihan >= 0 && data.grades.mataPelajaranPilihan <= 100 &&
+             data.grades.kokurikuler is number && data.grades.kokurikuler >= 0 && data.grades.kokurikuler <= 100;
     }
 
     function isValidAttendance(data) {
