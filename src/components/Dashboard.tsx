@@ -37,7 +37,7 @@ import {
   createDriveFolder
 } from '../utils/googleDrive';
 import { User as FirebaseUser } from 'firebase/auth';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { db, handleFirestoreError, OperationType, ensureSignedInUser } from '../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, deleteDoc, collection } from 'firebase/firestore';
 
 interface DashboardProps {
@@ -171,6 +171,13 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     async function loadFirebaseData() {
       try {
         setCloudSyncStatus('syncing');
+
+        // Wait for a secure signed in session (Anonymous fallback or Google restore)
+        try {
+          await ensureSignedInUser();
+        } catch (authError) {
+          console.warn("Could not establish Firebase session:", authError);
+        }
 
         // 1. Sync Profile
         const profileRef = doc(db, 'profiles', 'active_teacher');

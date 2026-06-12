@@ -1,5 +1,5 @@
 import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -9,6 +9,30 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 // Initialize Firestore (handle firestoreDatabaseId if exists, fallback to default)
 export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Ensures there is always an authenticated session with Firebase
+export async function ensureSignedInUser(): Promise<any> {
+  if (auth.currentUser) return auth.currentUser;
+
+  return new Promise((resolve, reject) => {
+    const unsubscribe = auth.onAuthStateChanged(async (user) => {
+      unsubscribe();
+      if (user) {
+        resolve(user);
+      } else {
+        try {
+          const res = await signInAnonymously(auth);
+          resolve(res.user);
+        } catch (error) {
+          console.warn("Firebase Anonymous Auth fallback is restricted (requires enabling " +
+                       "Anonymous Auth in the Firebase Console):", error);
+          // Gently resolve null so the application can still fall back to public/guest operation
+          resolve(null);
+        }
+      }
+    });
+  });
+}
 
 // Operational and Error definitions
 export enum OperationType {

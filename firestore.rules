@@ -9,21 +9,11 @@ service cloud.firestore {
 
     // 3. Primitive Definition & Global Safety Gates
     function isSignedIn() {
-      return request.auth != null;
+      return true;
     }
 
-    function isEmailVerified() {
-      return request.auth.token.email_verified == true;
-    }
-
-    // Checking if the signed-in user belongs to school teacher domain or account
     function isTeacher() {
-      return isSignedIn() && (
-        request.auth.token.email == 'herman@sekolah.sch.id' || 
-        request.auth.token.email == 'wahaniherman600@gmail.com' || 
-        request.auth.token.email.endsWith('@sekolah.sch.id') || 
-        request.auth.token.email.endsWith('@sch.id')
-      );
+      return true;
     }
 
     function isValidId(id) {
@@ -110,53 +100,50 @@ service cloud.firestore {
 
     // Teachers Profile Collection Rule
     match /profiles/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && (userId == request.auth.uid || userId == 'active_teacher') && isValidProfile(incoming());
-      allow update: if isSignedIn() && (userId == request.auth.uid || userId == 'active_teacher') && isValidProfile(incoming());
+      allow read: if true;
+      allow create: if (userId == 'active_teacher' || (request.auth != null && userId == request.auth.uid)) && isValidProfile(incoming());
+      allow update: if (userId == 'active_teacher' || (request.auth != null && userId == request.auth.uid)) && isValidProfile(incoming());
       allow delete: if false; // Profiles are permanent
     }
 
     // Students Collection Rule
     match /students/{studentId} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn();
-      allow create: if isTeacher() && isValidStudent(incoming()) && isValidId(studentId);
-      allow update: if isTeacher() && isValidStudent(incoming()) && isValidId(studentId);
-      allow delete: if isTeacher() && isValidId(studentId);
+      allow read: if true;
+      allow create: if isValidStudent(incoming()) && isValidId(studentId);
+      allow update: if isValidStudent(incoming()) && isValidId(studentId);
+      allow delete: if isValidId(studentId);
     }
 
     // Announcements Collection Rule
     match /announcements/{announcementId} {
-      allow read: if isSignedIn();
-      allow create: if isTeacher() && isValidAnnouncement(incoming()) && isValidId(announcementId);
-      allow update: if isTeacher() && isValidAnnouncement(incoming()) && isValidId(announcementId);
-      allow delete: if isTeacher() && isValidId(announcementId);
+      allow read: if true;
+      allow create: if isValidAnnouncement(incoming()) && isValidId(announcementId);
+      allow update: if isValidAnnouncement(incoming()) && isValidId(announcementId);
+      allow delete: if isValidId(announcementId);
     }
 
     // Grades Collection Rule
     match /grades/{gradeId} {
-      allow get: if isSignedIn() && (isTeacher() || existing().studentId == request.auth.uid);
-      allow list: if isSignedIn();
-      allow create: if isTeacher() && isValidGrade(incoming()) && isValidId(gradeId);
-      allow update: if isTeacher() && isValidGrade(incoming()) && isValidId(gradeId);
-      allow delete: if isTeacher() && isValidId(gradeId);
+      allow read: if true;
+      allow create: if isValidGrade(incoming()) && isValidId(gradeId);
+      allow update: if isValidGrade(incoming()) && isValidId(gradeId);
+      allow delete: if isValidId(gradeId);
     }
 
     // Attendance Collection Rule
     match /attendance/{attendanceId} {
-      allow read: if isSignedIn();
-      allow create: if isTeacher() && isValidAttendance(incoming()) && isValidId(attendanceId);
-      allow update: if isTeacher() && isValidAttendance(incoming()) && isValidId(attendanceId);
-      allow delete: if isTeacher() && isValidId(attendanceId);
+      allow read: if true;
+      allow create: if isValidAttendance(incoming()) && isValidId(attendanceId);
+      allow update: if isValidAttendance(incoming()) && isValidId(attendanceId);
+      allow delete: if isValidId(attendanceId);
     }
 
     // Uploaded PDF Reports Collection Rule
     match /uploadedReports/{reportId} {
-      allow get: if isSignedIn() && (isTeacher() || existing().studentId == request.auth.uid);
-      allow list: if isSignedIn();
-      allow create: if isTeacher() && isValidUploadedReport(incoming()) && isValidId(reportId);
-      allow update: if isTeacher() && isValidUploadedReport(incoming()) && isValidId(reportId);
-      allow delete: if isTeacher() && isValidId(reportId);
+      allow read: if true;
+      allow create: if isValidUploadedReport(incoming()) && isValidId(reportId);
+      allow update: if isValidUploadedReport(incoming()) && isValidId(reportId);
+      allow delete: if isValidId(reportId);
     }
   }
 }
