@@ -6,8 +6,8 @@ import firebaseConfig from '../../firebase-applet-config.json';
 // Initialize Firebase safely
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Initialize Firestore (handle firestoreDatabaseId if exists, fallback to default)
-export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
+// Initialize Firestore (handle firestoreDatabaseId if exists, fallback to custom applet database ID)
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId || "ai-studio-c2707df8-85e8-443b-8944-45fd6ef72350");
 export const auth = getAuth(app);
 
 // Ensures there is always an authenticated session with Firebase

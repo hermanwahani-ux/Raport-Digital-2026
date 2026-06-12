@@ -91,35 +91,35 @@ export const INITIAL_STUDENTS: Student[] = [
 export const INITIAL_GRADES: StudentGrade[] = [
   {
     studentId: 'std-1',
-    grades: { matematika: 85, ipa: 82, ips: 78, bahasaIndonesia: 90, bahasaInggris: 88 }
+    grades: { muatanUmum: 86, muatanKejuruan: 84, mataPelajaranPilihan: 80, kokurikuler: 90 }
   },
   {
     studentId: 'std-2',
-    grades: { matematika: 92, ipa: 95, ips: 88, bahasaIndonesia: 94, bahasaInggris: 91 }
+    grades: { muatanUmum: 93, muatanKejuruan: 95, mataPelajaranPilihan: 90, kokurikuler: 92 }
   },
   {
     studentId: 'std-3',
-    grades: { matematika: 75, ipa: 78, ips: 82, bahasaIndonesia: 80, bahasaInggris: 76 }
+    grades: { muatanUmum: 78, muatanKejuruan: 80, mataPelajaranPilihan: 76, kokurikuler: 85 }
   },
   {
     studentId: 'std-4',
-    grades: { matematika: 98, ipa: 96, ips: 92, bahasaIndonesia: 98, bahasaInggris: 95 }
+    grades: { muatanUmum: 97, muatanKejuruan: 98, mataPelajaranPilihan: 95, kokurikuler: 96 }
   },
   {
     studentId: 'std-5',
-    grades: { matematika: 65, ipa: 70, ips: 72, bahasaIndonesia: 78, bahasaInggris: 68 }
+    grades: { muatanUmum: 70, muatanKejuruan: 72, mataPelajaranPilihan: 68, kokurikuler: 80 }
   },
   {
     studentId: 'std-6',
-    grades: { matematika: 80, ipa: 84, ips: 85, bahasaIndonesia: 88, bahasaInggris: 82 }
+    grades: { muatanUmum: 82, muatanKejuruan: 85, mataPelajaranPilihan: 80, kokurikuler: 88 }
   },
   {
     studentId: 'std-7',
-    grades: { matematika: 88, ipa: 85, ips: 80, bahasaIndonesia: 84, bahasaInggris: 90 }
+    grades: { muatanUmum: 86, muatanKejuruan: 88, mataPelajaranPilihan: 85, kokurikuler: 92 }
   },
   {
     studentId: 'std-8',
-    grades: { matematika: 90, ipa: 88, ips: 86, bahasaIndonesia: 92, bahasaInggris: 94 }
+    grades: { muatanUmum: 91, muatanKejuruan: 93, mataPelajaranPilihan: 89, kokurikuler: 94 }
   }
 ];
 

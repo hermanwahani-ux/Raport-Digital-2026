@@ -16,11 +16,10 @@ export interface Student {
 }
 
 export interface SubjectGrades {
-  matematika: number;
-  ipa: number;
-  ips: number;
-  bahasaIndonesia: number;
-  bahasaInggris: number;
+  muatanUmum: number;
+  muatanKejuruan: number;
+  mataPelajaranPilihan: number;
+  kokurikuler: number;
 }
 
 export interface StudentGrade {

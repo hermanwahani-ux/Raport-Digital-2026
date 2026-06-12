@@ -16,7 +16,7 @@ const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive');
 
 let isSigningIn = false;
-let cachedAccessToken: string | null = localStorage.getItem('waliku_drive_token');
+let cachedAccessToken: string | null = null;
 
 // Initialize auth state listener
 export const initAuth = (
@@ -24,18 +24,10 @@ export const initAuth = (
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
-    if (user) {
-      const savedToken = localStorage.getItem('waliku_drive_token');
-      if (savedToken) {
-        cachedAccessToken = savedToken;
-        if (onAuthSuccess) onAuthSuccess(user, savedToken);
-      } else if (!isSigningIn) {
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
-      }
+    if (user && cachedAccessToken) {
+      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
     } else {
       cachedAccessToken = null;
-      localStorage.removeItem('waliku_drive_token');
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -52,7 +44,6 @@ export const connectGoogleDrive = async (): Promise<{ user: User; accessToken: s
     }
 
     cachedAccessToken = credential.accessToken;
-    localStorage.setItem('waliku_drive_token', cachedAccessToken);
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Firebase OAuth error:', error);
@@ -66,7 +57,6 @@ export const connectGoogleDrive = async (): Promise<{ user: User; accessToken: s
 export const disconnectGoogleDrive = async () => {
   await auth.signOut();
   cachedAccessToken = null;
-  localStorage.removeItem('waliku_drive_token');
 };
 
 export const getAccessToken = (): string | null => {
@@ -107,8 +97,10 @@ export function blobToDataURL(blob: Blob): Promise<string> {
  */
 export async function createDriveFolder(token: string, folderName: string): Promise<string> {
   // First, check if a folder with the same name already exists
+  const escapedName = folderName.replace(/'/g, "\\'");
+  const qStr = `name = '${escapedName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
   const listRes = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=name='${encodeURIComponent(folderName)}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id)`,
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(qStr)}&fields=files(id)`,
     {
       headers: { Authorization: `Bearer ${token}` }
     }
@@ -195,11 +187,12 @@ export async function deleteFileFromDrive(token: string, fileId: string): Promis
 export async function listPdfFilesFromDrive(token: string, queryText?: string): Promise<{ id: string; name: string; size?: string; createdTime?: string }[]> {
   let q = "mimeType='application/pdf' and trashed=false";
   if (queryText) {
-    q += ` and name contains '${encodeURIComponent(queryText)}'`;
+    const escapedQuery = queryText.replace(/'/g, "\\'");
+    q += ` and name contains '${escapedQuery}'`;
   }
   
   const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,size,createdTime)&orderBy=modifiedTime desc&pageSize=30`,
+    `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,size,createdTime)&orderBy=modifiedTime desc&pageSize=30`,
     {
       headers: { Authorization: `Bearer ${token}` }
     }

@@ -39,7 +39,7 @@ export const downloadSingleStudentRaforPDF = (
     format: 'a4'
   });
 
-  const mGrades = gradeRecord?.grades || { matematika: 0, ipa: 0, ips: 0, bahasaIndonesia: 0, bahasaInggris: 0 };
+  const mGrades = gradeRecord?.grades || { muatanUmum: 0, muatanKejuruan: 0, mataPelajaranPilihan: 0, kokurikuler: 0 };
 
   // --- Headings & Border ---
   doc.setDrawColor(0, 40, 142); // #00288e
@@ -113,18 +113,17 @@ export const downloadSingleStudentRaforPDF = (
   doc.setFontSize(8.5);
   doc.setTextColor(0, 40, 142);
   doc.text('NO', 20, tableTop + 6.5, { align: 'center' });
-  doc.text('MATA PELAJARAN', 30, tableTop + 6.5);
+  doc.text('MATA PELAJARAN / INDIKATOR', 30, tableTop + 6.5);
   doc.text('KKM', 115, tableTop + 6.5, { align: 'center' });
   doc.text('NILAI AKHIR', 142, tableTop + 6.5, { align: 'center' });
   doc.text('PREDIKAT', 178, tableTop + 6.5, { align: 'center' });
 
   // Rows data
   const subjects = [
-    { label: 'Matematika (Wajib)', score: mGrades.matematika },
-    { label: 'Ilmu Pengetahuan Alam (IPA / Sains)', score: mGrades.ipa },
-    { label: 'Ilmu Pengetahuan Sosial (IPS / Sosial)', score: mGrades.ips },
-    { label: 'Bahasa dan Sastra Indonesia', score: mGrades.bahasaIndonesia },
-    { label: 'Bahasa Inggris (Peminatan)', score: mGrades.bahasaInggris }
+    { label: 'Muatan Umum', score: mGrades.muatanUmum },
+    { label: 'Muatan Kejuruan', score: mGrades.muatanKejuruan },
+    { label: 'Mata Pelajaran Pilihan', score: mGrades.mataPelajaranPilihan },
+    { label: 'Kokurikuler', score: mGrades.kokurikuler }
   ];
 
   doc.setTextColor(40, 40, 40);
@@ -274,14 +273,13 @@ export const downloadClassGradesReportPDF = (
   doc.setTextColor(0, 40, 142);
   doc.text('NO', 20, tableTop + 6.5, { align: 'center' });
   doc.text('NAMA LENGKAP SISWA', 30, tableTop + 6.5);
-  doc.text('NISN', 105, tableTop + 6.5);
-  doc.text('MTK', 140, tableTop + 6.5, { align: 'center' });
-  doc.text('IPA', 158, tableTop + 6.5, { align: 'center' });
-  doc.text('IPS', 176, tableTop + 6.5, { align: 'center' });
-  doc.text('B.IND', 194, tableTop + 6.5, { align: 'center' });
-  doc.text('B.ING', 212, tableTop + 6.5, { align: 'center' });
-  doc.text('RATA-RATA', 236, tableTop + 6.5, { align: 'center' });
-  doc.text('PREDIKAT', 264, tableTop + 6.5, { align: 'center' });
+  doc.text('NISN', 100, tableTop + 6.5);
+  doc.text('UMUM', 135, tableTop + 6.5, { align: 'center' });
+  doc.text('KEJURUAN', 160, tableTop + 6.5, { align: 'center' });
+  doc.text('PILIHAN', 188, tableTop + 6.5, { align: 'center' });
+  doc.text('KOKURIKULER', 218, tableTop + 6.5, { align: 'center' });
+  doc.text('RATA-RATA', 246, tableTop + 6.5, { align: 'center' });
+  doc.text('PREDIKAT', 268, tableTop + 6.5, { align: 'center' });
 
   let currentY = tableTop + 10;
   doc.setTextColor(50, 50, 50);
@@ -295,10 +293,10 @@ export const downloadClassGradesReportPDF = (
     doc.rect(15, currentY, 267, 9);
 
     const sGrade = grades.find(g => g.studentId === student.id)?.grades || {
-      matematika: 0, ipa: 0, ips: 0, bahasaIndonesia: 0, bahasaInggris: 0
+      muatanUmum: 0, muatanKejuruan: 0, mataPelajaranPilihan: 0, kokurikuler: 0
     };
     
-    const sAvg = (sGrade.matematika + sGrade.ipa + sGrade.ips + sGrade.bahasaIndonesia + sGrade.bahasaInggris) / 5;
+    const sAvg = (sGrade.muatanUmum + sGrade.muatanKejuruan + sGrade.mataPelajaranPilihan + sGrade.kokurikuler) / 4;
     const letter = getGradeLetter(sAvg);
 
     doc.setFont('helvetica', 'normal');
@@ -306,19 +304,18 @@ export const downloadClassGradesReportPDF = (
     doc.setFont('helvetica', 'bold');
     doc.text(student.name, 30, currentY + 6);
     doc.setFont('helvetica', 'normal');
-    doc.text(student.nisn, 105, currentY + 6);
+    doc.text(student.nisn, 100, currentY + 6);
     
     doc.setFont('helvetica', 'bold');
-    doc.text(sGrade.matematika.toString(), 140, currentY + 6, { align: 'center' });
-    doc.text(sGrade.ipa.toString(), 158, currentY + 6, { align: 'center' });
-    doc.text(sGrade.ips.toString(), 176, currentY + 6, { align: 'center' });
-    doc.text(sGrade.bahasaIndonesia.toString(), 194, currentY + 6, { align: 'center' });
-    doc.text(sGrade.bahasaInggris.toString(), 212, currentY + 6, { align: 'center' });
+    doc.text(sGrade.muatanUmum.toString(), 135, currentY + 6, { align: 'center' });
+    doc.text(sGrade.muatanKejuruan.toString(), 160, currentY + 6, { align: 'center' });
+    doc.text(sGrade.mataPelajaranPilihan.toString(), 188, currentY + 6, { align: 'center' });
+    doc.text(sGrade.kokurikuler.toString(), 218, currentY + 6, { align: 'center' });
     
     doc.setTextColor(0, 40, 142);
-    doc.text(sAvg.toFixed(1), 236, currentY + 6, { align: 'center' });
+    doc.text(sAvg.toFixed(1), 246, currentY + 6, { align: 'center' });
     doc.setTextColor(50, 50, 50);
-    doc.text(letter, 264, currentY + 6, { align: 'center' });
+    doc.text(letter, 268, currentY + 6, { align: 'center' });
 
     currentY += 9;
   });
@@ -331,8 +328,8 @@ export const downloadClassGradesReportPDF = (
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(0, 40, 142);
   doc.text('RATA-RATA KOMPARATIF KELAS', 30, currentY + 6.5);
-  doc.text(classAverage.toFixed(1), 236, currentY + 6.5, { align: 'center' });
-  doc.text(getGradeLetter(classAverage), 264, currentY + 6.5, { align: 'center' });
+  doc.text(classAverage.toFixed(1), 246, currentY + 6.5, { align: 'center' });
+  doc.text(getGradeLetter(classAverage), 268, currentY + 6.5, { align: 'center' });
 
   // Signatures on landscape
   const footerY = currentY + 18;
