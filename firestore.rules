@@ -20,6 +20,7 @@ service cloud.firestore {
     function isTeacher() {
       return isSignedIn() && (
         request.auth.token.email == 'herman@sekolah.sch.id' || 
+        request.auth.token.email == 'wahaniherman600@gmail.com' || 
         request.auth.token.email.endsWith('@sekolah.sch.id') || 
         request.auth.token.email.endsWith('@sch.id')
       );
@@ -47,7 +48,7 @@ service cloud.firestore {
              data.school is string && data.school.size() <= 150 &&
              data.className is string && data.className.size() <= 30 &&
              data.academicYear is string && data.academicYear.size() <= 15 &&
-             data.avatar is string && data.avatar.size() <= 100000 &&
+             data.avatar is string && data.avatar.size() <= 5000000 &&
              data.email is string && data.email.size() <= 100;
     }
 
@@ -110,8 +111,8 @@ service cloud.firestore {
     // Teachers Profile Collection Rule
     match /profiles/{userId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && userId == request.auth.uid && isValidProfile(incoming());
-      allow update: if isSignedIn() && userId == request.auth.uid && isValidProfile(incoming());
+      allow create: if isSignedIn() && (userId == request.auth.uid || userId == 'active_teacher') && isValidProfile(incoming());
+      allow update: if isSignedIn() && (userId == request.auth.uid || userId == 'active_teacher') && isValidProfile(incoming());
       allow delete: if false; // Profiles are permanent
     }
 
