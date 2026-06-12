@@ -43,16 +43,15 @@ service cloud.firestore {
     }
 
     function isValidStudent(data) {
-      return data.keys().hasAll(['id', 'name', 'gender', 'nisn', 'avatar', 'email', 'parentName', 'parentPhone']) &&
-             data.keys().size() >= 8 && data.keys().size() <= 10 &&
+      return data.keys().hasAll(['id', 'name']) &&
              data.id is string && isValidId(data.id) &&
              data.name is string && data.name.size() <= 100 &&
-             (data.gender == 'Laki-laki' || data.gender == 'Perempuan') &&
-             data.nisn is string && data.nisn.matches('^[0-9]+$') && data.nisn.size() <= 20 &&
-             data.avatar is string && data.avatar.size() <= 5000000 &&
-             data.email is string && data.email.size() <= 100 &&
-             data.parentName is string && data.parentName.size() <= 100 &&
-             data.parentPhone is string && data.parentPhone.size() <= 30 &&
+             (!data.keys().hasAll(['gender']) || (data.gender == 'Laki-laki' || data.gender == 'Perempuan')) &&
+             (!data.keys().hasAll(['nisn']) || (data.nisn is string && data.nisn.size() <= 50)) &&
+             (!data.keys().hasAll(['avatar']) || (data.avatar is string && data.avatar.size() <= 5000000)) &&
+             (!data.keys().hasAll(['email']) || (data.email is string && data.email.size() <= 100)) &&
+             (!data.keys().hasAll(['parentName']) || (data.parentName is string && data.parentName.size() <= 100)) &&
+             (!data.keys().hasAll(['parentPhone']) || (data.parentPhone is string && data.parentPhone.size() <= 30)) &&
              (!data.keys().hasAll(['className']) || (data.className is string && data.className.size() <= 30));
     }
 
@@ -71,12 +70,7 @@ service cloud.firestore {
       return data.keys().hasAll(['studentId', 'grades']) &&
              data.keys().size() >= 2 && data.keys().size() <= 3 &&
              data.studentId is string && isValidId(data.studentId) &&
-             data.grades is map && 
-             data.grades.keys().hasAll(['muatanUmum', 'muatanKejuruan', 'mataPelajaranPilihan', 'kokurikuler']) &&
-             data.grades.muatanUmum is number && data.grades.muatanUmum >= 0 && data.grades.muatanUmum <= 100 &&
-             data.grades.muatanKejuruan is number && data.grades.muatanKejuruan >= 0 && data.grades.muatanKejuruan <= 100 &&
-             data.grades.mataPelajaranPilihan is number && data.grades.mataPelajaranPilihan >= 0 && data.grades.mataPelajaranPilihan <= 100 &&
-             data.grades.kokurikuler is number && data.grades.kokurikuler >= 0 && data.grades.kokurikuler <= 100;
+             data.grades is map;
     }
 
     function isValidAttendance(data) {
@@ -88,13 +82,14 @@ service cloud.firestore {
 
     function isValidUploadedReport(data) {
       return data.keys().hasAll(['id', 'studentId', 'fileName', 'fileSize', 'uploadDate', 'fileData']) &&
-             data.keys().size() == 6 &&
+             data.keys().size() >= 6 && data.keys().size() <= 8 &&
              data.id is string && isValidId(data.id) &&
              data.studentId is string && isValidId(data.studentId) &&
              data.fileName is string && data.fileName.size() <= 255 &&
              data.fileSize is string && data.fileSize.size() <= 30 &&
              data.uploadDate is string && data.uploadDate.size() <= 50 &&
-             data.fileData is string && data.fileData.size() <= 10000000; // Limit to ~10MB PDF chunks
+             data.fileData is string && data.fileData.size() <= 10000000 &&
+             (!data.keys().hasAll(['semester']) || (data.semester is int && (data.semester == 1 || data.semester == 2)));
     }
 
     // Teachers Profile Collection Rule

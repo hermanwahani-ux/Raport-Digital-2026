@@ -125,6 +125,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     fileSize: string;
     uploadDate: string;
     fileData: string;
+    semester?: number;
   }[]>(() => {
     const saved = localStorage.getItem('waliku_uploaded_reports');
     if (saved) return JSON.parse(saved);
@@ -337,15 +338,16 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   // --- PDF Report Upload Handlers ---
   const handleFileUpload = (
     e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>,
-    studentId: string
+    studentId: string,
+    forcedSemester?: 1 | 2
   ) => {
     e.preventDefault();
     let file: File | null = null;
     
     if ('dataTransfer' in e) {
-      file = e.dataTransfer.files?.[0] || null;
+       file = e.dataTransfer.files?.[0] || null;
     } else if ('target' in e && e.target.files) {
-      file = e.target.files?.[0] || null;
+       file = e.target.files?.[0] || null;
     }
 
     if (file) {
@@ -358,13 +360,32 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       reader.onload = (event) => {
         const base64 = event.target?.result as string;
         const sizeString = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        
+        let semesterToUse = forcedSemester;
+        if (!semesterToUse) {
+          if (printingCard && printingCard.id === studentId) {
+            semesterToUse = selectedSemesterToUpload;
+          } else {
+            const input = window.prompt("Tentukan semester untuk berkas scan raport ini (Ketik angka 1 atau 2):", "2");
+            if (input === null) return; // User cancelled
+            const num = parseInt(input);
+            if (num === 1 || num === 2) {
+              semesterToUse = num as 1 | 2;
+            } else {
+              alert("Input salah! Mengunggah dibatalkan.");
+              return;
+            }
+          }
+        }
+
         const newReport = {
           id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           studentId: studentId,
           fileName: file.name,
           fileSize: sizeString,
           uploadDate: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }),
-          fileData: base64
+          fileData: base64,
+          semester: semesterToUse
         };
         setUploadedReports(prev => [newReport, ...prev]);
         setDoc(doc(db, 'uploadedReports', newReport.id), newReport).catch(err => handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${newReport.id}`));
@@ -522,21 +543,25 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const handleImportFromDrive = async (fileId: string, fileName: string) => {
     if (!driveToken || !targetStudentForDriveImport) return;
     
+    const input = window.prompt("Import berkas dari Google Drive. Tentukan semester untuk raport ini (Ketik 1 atau 2):", "2");
+    if (input === null) return; // User cancelled
+    const semesterToUse = input === "1" ? 1 : 2; // default to 2
+
     setIsDriveLoading(true);
     try {
       const { fileData, sizeString } = await downloadFileAsBase64(driveToken, fileId);
       
-      // Check if student already has a PDF, overwrite or add
       const newReport = {
          id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
          studentId: targetStudentForDriveImport,
          fileName: fileName,
          fileSize: sizeString,
          uploadDate: new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }),
-         fileData: fileData
+         fileData: fileData,
+         semester: semesterToUse
       };
       
-      setUploadedReports(prev => [newReport, ...prev.filter(r => r.studentId !== targetStudentForDriveImport)]);
+      setUploadedReports(prev => [newReport, ...prev.filter(r => !(r.studentId === targetStudentForDriveImport && (r.semester || 2) === semesterToUse))]);
       setDoc(doc(db, 'uploadedReports', newReport.id), newReport).catch(err => handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${newReport.id}`));
       setIsDrivePickerOpen(false);
       setTargetStudentForDriveImport(null);
@@ -552,8 +577,9 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   // Modals / Editors
   const [editingGrade, setEditingGrade] = useState<StudentGrade | null>(null);
   const [printingCard, setPrintingCard] = useState<Student | null>(null);
+  const [selectedSemesterToUpload, setSelectedSemesterToUpload] = useState<1 | 2>(2);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [previewPdfReport, setPreviewPdfReport] = useState<{ id: string; studentId: string; studentName: string; fileName: string; fileData: string; fileSize: string; uploadDate: string } | null>(null);
+  const [previewPdfReport, setPreviewPdfReport] = useState<{ id: string; studentId: string; studentName: string; fileName: string; fileData: string; fileSize: string; uploadDate: string; semester?: number } | null>(null);
 
   // Manual Subject Statistics Overrides
   const [isManualOverride, setIsManualOverride] = useState<boolean>(() => {
@@ -1190,44 +1216,104 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                                 </p>
                               </div>
                             ) : (
-                              <div className="space-y-2">
-                                {studentPDFs.map((report) => (
-                                  <div key={report.id} className="p-3 bg-indigo-50/20 border border-indigo-150 rounded-lg hover:border-indigo-300 transition duration-150 flex flex-col space-y-2 text-left">
-                                    <div className="flex items-start space-x-2">
-                                      <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                                      </svg>
-                                      <div className="min-w-0 flex-1">
-                                        <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
-                                        <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
-                                      </div>
+                              <div className="space-y-4">
+                                {/* Semester 1 Section */}
+                                <div className="space-y-2">
+                                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded-md block w-max">SEMESTER 1 (GANJIL)</span>
+                                  {studentPDFs.filter(r => r.semester === 1).length === 0 ? (
+                                    <p className="text-[10.5px] text-slate-400 italic pl-1 leading-normal">Belum ada berkas scan raport Semester 1 resmi yang diunggah.</p>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {studentPDFs.filter(r => r.semester === 1).map((report) => (
+                                        <div key={report.id} className="p-3 bg-indigo-50/20 border border-indigo-150 rounded-lg hover:border-indigo-300 transition duration-150 flex flex-col space-y-2 text-left">
+                                          <div className="flex items-start space-x-2">
+                                            <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="min-w-0 flex-1">
+                                              <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
+                                              <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
+                                            </div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                              onClick={() => setPreviewPdfReport({
+                                                id: report.id,
+                                                studentId: currentStudent.id,
+                                                studentName: currentStudent.name,
+                                                fileName: report.fileName,
+                                                fileData: report.fileData,
+                                                fileSize: report.fileSize,
+                                                uploadDate: report.uploadDate,
+                                                semester: 1
+                                              })}
+                                              className="py-1 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow-sm transition cursor-pointer"
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                              <span>Pratinjau</span>
+                                            </button>
+                                            <button
+                                              onClick={() => handleDownloadFile(report.fileData, report.fileName)}
+                                              className="py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow transition cursor-pointer"
+                                            >
+                                              <Download className="w-3.5 h-3.5" />
+                                              <span>Unduh</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <button
-                                        onClick={() => setPreviewPdfReport({
-                                          id: report.id,
-                                          studentId: currentStudent.id,
-                                          studentName: currentStudent.name,
-                                          fileName: report.fileName,
-                                          fileData: report.fileData,
-                                          fileSize: report.fileSize,
-                                          uploadDate: report.uploadDate
-                                        })}
-                                        className="py-1.5 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10.5px] font-bold rounded flex items-center justify-center space-x-1 shadow-sm transition cursor-pointer"
-                                      >
-                                        <Eye className="w-3.5 h-3.5" />
-                                        <span>Pratinjau PDF</span>
-                                      </button>
-                                      <button
-                                        onClick={() => handleDownloadFile(report.fileData, report.fileName)}
-                                        className="py-1.5 bg-emerald-650 bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-bold rounded flex items-center justify-center space-x-1 shadow transition cursor-pointer"
-                                      >
-                                        <Download className="w-3.5 h-3.5" />
-                                        <span>Unduh PDF</span>
-                                      </button>
+                                  )}
+                                </div>
+
+                                {/* Semester 2 Section */}
+                                <div className="space-y-2 pt-2 border-t border-slate-100">
+                                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-150 px-2 py-0.5 rounded-md block w-max">SEMESTER 2 (GENAP)</span>
+                                  {studentPDFs.filter(r => r.semester !== 1).length === 0 ? (
+                                    <p className="text-[10.5px] text-slate-400 italic pl-1 leading-normal">Belum ada berkas scan raport Semester 2 resmi yang diunggah.</p>
+                                  ) : (
+                                    <div className="space-y-2">
+                                      {studentPDFs.filter(r => r.semester !== 1).map((report) => (
+                                        <div key={report.id} className="p-3 bg-emerald-50/10 border border-emerald-150 rounded-lg hover:border-emerald-300 transition duration-150 flex flex-col space-y-2 text-left">
+                                          <div className="flex items-start space-x-2">
+                                            <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                                            </svg>
+                                            <div className="min-w-0 flex-1">
+                                              <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
+                                              <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
+                                            </div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-2">
+                                            <button
+                                              onClick={() => setPreviewPdfReport({
+                                                id: report.id,
+                                                studentId: currentStudent.id,
+                                                studentName: currentStudent.name,
+                                                fileName: report.fileName,
+                                                fileData: report.fileData,
+                                                fileSize: report.fileSize,
+                                                uploadDate: report.uploadDate,
+                                                semester: report.semester || 2
+                                              })}
+                                              className="py-1 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow-sm transition cursor-pointer"
+                                            >
+                                              <Eye className="w-3.5 h-3.5" />
+                                              <span>Pratinjau</span>
+                                            </button>
+                                            <button
+                                              onClick={() => handleDownloadFile(report.fileData, report.fileName)}
+                                              className="py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow transition cursor-pointer"
+                                            >
+                                              <Download className="w-3.5 h-3.5" />
+                                              <span>Unduh</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
                                     </div>
-                                  </div>
-                                ))}
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -2230,9 +2316,12 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                                   {studentPDFs.map(pdf => (
                                     <div key={pdf.id} className="flex items-center space-x-1.5 text-xs text-slate-800 bg-emerald-50 border border-emerald-150 p-1.5 rounded">
                                       <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                      <div className="truncate max-w-[150px] leading-tight">
-                                        <span className="block font-bold truncate text-slate-800" title={pdf.fileName}>{pdf.fileName}</span>
-                                        <span className="text-[9px] text-slate-400 font-semibold">{pdf.fileSize} • {pdf.uploadDate}</span>
+                                      <div className="truncate max-w-[150px] leading-tight flex-1 text-left">
+                                        <span className="block font-bold truncate text-slate-800" title={pdf.fileName}>
+                                          <span className="bg-indigo-600 text-white font-extrabold text-[8px] px-1 py-0.5 rounded mr-1 inline-block uppercase leading-none">SMT {pdf.semester || 2}</span>
+                                          {pdf.fileName}
+                                        </span>
+                                        <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">{pdf.fileSize} • {pdf.uploadDate}</span>
                                       </div>
                                     </div>
                                   ))}
@@ -2264,6 +2353,14 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                                     <span>Input/Edit Nilai</span>
                                   </button>
                                   <button
+                                    onClick={() => setPrintingCard(student)}
+                                    className="p-1 px-2.5 text-[11px] font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded shadow-xs flex items-center space-x-1 cursor-pointer duration-150"
+                                    title="Kelola & Cetak E-Raport / Dokumen PDF"
+                                  >
+                                    <FileText className="w-3 h-3 text-purple-600" />
+                                    <span>Kelola E-Raport (Smt 1/2)</span>
+                                  </button>
+                                  <button
                                     onClick={() => openEditStudentModal(student)}
                                     className="p-1 px-2.5 text-[11px] font-bold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-300 rounded shadow-xs flex items-center space-x-1 cursor-pointer duration-150"
                                     title="Edit Informasi & Kelas Siswa"
@@ -2288,51 +2385,61 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
                                 {/* PDF Report Action Handles */}
                                 {studentPDFs.length > 0 ? (
-                                  <div className="flex items-center space-x-1 shrink-0">
-                                    <button
-                                      onClick={() => setPreviewPdfReport({
-                                        id: studentPDFs[0].id,
-                                        studentId: student.id,
-                                        studentName: student.name,
-                                        fileName: studentPDFs[0].fileName,
-                                        fileData: studentPDFs[0].fileData,
-                                        fileSize: studentPDFs[0].fileSize,
-                                        uploadDate: studentPDFs[0].uploadDate
-                                      })}
-                                      className="p-1 px-2.5 text-[11px] font-bold text-[#00288e] bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded flex items-center space-x-1 cursor-pointer duration-150"
-                                      title="Pratinjau Raport PDF"
-                                    >
-                                      <Eye className="w-3" />
-                                      <span>Pratinjau</span>
-                                    </button>
-                                    {driveToken && (
-                                      <button
-                                        onClick={() => syncReportToDrive(studentPDFs[0].id)}
-                                        disabled={syncingReports[studentPDFs[0].id]}
-                                        className="p-1 text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded duration-150 disabled:opacity-50 cursor-pointer"
-                                        title="Cadangkan Ke Drive Anda"
-                                      >
-                                        {syncingReports[studentPDFs[0].id] ? (
-                                          <RefreshCw className="w-3 animate-spin text-blue-500" />
-                                        ) : (
-                                          <Cloud className="w-3 text-blue-600" />
-                                        )}
-                                      </button>
-                                    )}
-                                    <button
-                                      onClick={() => handleDownloadFile(studentPDFs[0].fileData, studentPDFs[0].fileName)}
-                                      className="p-1 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded duration-150 cursor-pointer"
-                                      title="Unduh Raport PDF"
-                                    >
-                                      <Download className="w-3" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteUploadedFile(studentPDFs[0].id)}
-                                      className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded duration-150 cursor-pointer"
-                                      title="Hapus Berkas PDF"
-                                    >
-                                      <Trash2 className="w-3" />
-                                    </button>
+                                  <div className="flex flex-col gap-1 w-full max-w-[180px] shrink-0">
+                                    {studentPDFs.map(pdf => (
+                                      <div key={pdf.id} className="flex items-center justify-between p-1 px-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] w-full gap-1.5 font-sans">
+                                        <span className="font-extrabold bg-indigo-600 text-white px-1 rounded text-[8px] shrink-0 uppercase leading-none">S{pdf.semester || 2}</span>
+                                        <span className="truncate text-slate-500 font-medium text-[9px] mr-auto text-left" title={pdf.fileName}>
+                                          {pdf.fileName}
+                                        </span>
+                                        <div className="flex items-center space-x-0.5 shrink-0">
+                                          <button
+                                            onClick={() => setPreviewPdfReport({
+                                              id: pdf.id,
+                                              studentId: student.id,
+                                              studentName: student.name,
+                                              fileName: pdf.fileName,
+                                              fileData: pdf.fileData,
+                                              fileSize: pdf.fileSize,
+                                              uploadDate: pdf.uploadDate,
+                                              semester: pdf.semester
+                                            })}
+                                            className="p-0.5 text-[#00288e] hover:bg-blue-50 rounded"
+                                            title={`Pratinjau Raport Smt ${pdf.semester || 2}`}
+                                          >
+                                            <Eye className="w-3 h-3" />
+                                          </button>
+                                          {driveToken && (
+                                            <button
+                                              onClick={() => syncReportToDrive(pdf.id)}
+                                              disabled={syncingReports[pdf.id]}
+                                              className="p-0.5 text-blue-700 hover:bg-blue-50 rounded disabled:opacity-50"
+                                              title="Cadangkan Ke Google Drive"
+                                            >
+                                              {syncingReports[pdf.id] ? (
+                                                <RefreshCw className="w-3 h-3 animate-spin text-blue-500" />
+                                              ) : (
+                                                <Cloud className="w-3 h-3 text-blue-600" />
+                                              )}
+                                            </button>
+                                          )}
+                                          <button
+                                            onClick={() => handleDownloadFile(pdf.fileData, pdf.fileName)}
+                                            className="p-0.5 text-emerald-700 hover:bg-emerald-50 rounded"
+                                            title="Unduh"
+                                          >
+                                            <Download className="w-3 h-3" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteUploadedFile(pdf.id)}
+                                            className="p-0.5 text-slate-400 hover:text-rose-600 rounded"
+                                            title="Hapus"
+                                          >
+                                            <Trash2 className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
                                   </div>
                                 ) : (
                                   <div className="text-[10px] text-gray-400 italic shrink-0">

@@ -46,34 +46,75 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
   const [studentRememberMe, setStudentRememberMe] = useState(true);
   const [studentError, setStudentError] = useState('');
   const [isStudentLoading, setIsStudentLoading] = useState(false);
-  const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
-
-  useEffect(() => {
-    async function fetchStudents() {
+  const [students, setStudents] = useState<Student[]>(() => {
+    const saved = localStorage.getItem('waliku_students');
+    if (saved) {
       try {
-        const snap = await getDocs(collection(db, 'students'));
-        if (snap.size > 0) {
-          const list: Student[] = [];
-          snap.forEach(sDoc => {
-            const data = sDoc.data() as Student;
-            list.push(data);
-          });
-          
-          // Merge with INITIAL_STUDENTS so both original baseline and newly created students exist
-          const merged = [...list];
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const merged = [...parsed];
           INITIAL_STUDENTS.forEach(initS => {
             if (!merged.some(s => s.id === initS.id || s.nisn === initS.nisn)) {
               merged.push(initS);
             }
           });
-          setStudents(merged);
+          return merged;
         }
+      } catch (err) {
+        console.error("Gagal mendapatkan data siswa dari localStorage:", err);
+      }
+    }
+    return INITIAL_STUDENTS;
+  });
+
+  useEffect(() => {
+    async function fetchStudents() {
+      try {
+        const snap = await getDocs(collection(db, 'students'));
+        const list: Student[] = [];
+        if (snap.size > 0) {
+          snap.forEach(sDoc => {
+            const data = sDoc.data() as Student;
+            list.push(data);
+          });
+        }
+        
+        // Gabungkan hasil Firestore, data localStorage, dan data baseline awal
+        const merged = [...list];
+        const savedStr = localStorage.getItem('waliku_students');
+        if (savedStr) {
+          try {
+            const savedList = JSON.parse(savedStr);
+            if (Array.isArray(savedList)) {
+              savedList.forEach(s => {
+                if (!merged.some(m => m.id === s.id || m.nisn === s.nisn)) {
+                  merged.push(s);
+                }
+              });
+            }
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        INITIAL_STUDENTS.forEach(initS => {
+          if (!merged.some(s => s.id === initS.id || s.nisn === initS.nisn)) {
+            merged.push(initS);
+          }
+        });
+
+        setStudents(merged);
+        localStorage.setItem('waliku_students', JSON.stringify(merged));
       } catch (err) {
         console.error("Gagal memuat siswa dari Cloud Firestore:", err);
       }
     }
     fetchStudents();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem('waliku_students', JSON.stringify(students));
+  }, [students]);
 
   // --- Teacher Submit Handler ---
   const handleTeacherSubmit = (e: React.FormEvent) => {
@@ -120,7 +161,8 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
       setIsStudentLoading(false);
       
       // Match NISN from students state (which includes Firestore data)
-      const matchedStudent = students.find(s => s.nisn === studentNisn);
+      const inputNisn = studentNisn.trim();
+      const matchedStudent = students.find(s => s.nisn.trim() === inputNisn);
       if (matchedStudent) {
         onLoginSuccess(matchedStudent.email, 'student', matchedStudent.id);
       } else {
@@ -146,7 +188,8 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
     setIsStudentLoading(true);
     setTimeout(() => {
       setIsStudentLoading(false);
-      const student = students.find(s => s.nisn === nisn);
+      const cleanNisn = nisn.trim();
+      const student = students.find(s => s.nisn.trim() === cleanNisn);
       if (student) {
         onLoginSuccess(student.email, 'student', student.id);
       }
