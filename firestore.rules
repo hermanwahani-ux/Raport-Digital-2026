@@ -72,12 +72,11 @@ service cloud.firestore {
              data.keys().size() == 2 &&
              data.studentId is string && isValidId(data.studentId) &&
              data.grades is map && 
-             data.grades.keys().hasAll(['matematika', 'ipa', 'ips', 'bahasaIndonesia', 'bahasaInggris']) &&
-             data.grades.matematika is int && data.grades.matematika >= 0 && data.grades.matematika <= 100 &&
-             data.grades.ipa is int && data.grades.ipa >= 0 && data.grades.ipa <= 100 &&
-             data.grades.ips is int && data.grades.ips >= 0 && data.grades.ips <= 100 &&
-             data.grades.bahasaIndonesia is int && data.grades.bahasaIndonesia >= 0 && data.grades.bahasaIndonesia <= 100 &&
-             data.grades.bahasaInggris is int && data.grades.bahasaInggris >= 0 && data.grades.bahasaInggris <= 100;
+             data.grades.keys().hasAll(['muatanUmum', 'muatanKejuruan', 'mataPelajaranPilihan', 'kokurikuler']) &&
+             data.grades.muatanUmum is int && data.grades.muatanUmum >= 0 && data.grades.muatanUmum <= 100 &&
+             data.grades.muatanKejuruan is int && data.grades.muatanKejuruan >= 0 && data.grades.muatanKejuruan <= 100 &&
+             data.grades.mataPelajaranPilihan is int && data.grades.mataPelajaranPilihan >= 0 && data.grades.mataPelajaranPilihan <= 100 &&
+             data.grades.kokurikuler is int && data.grades.kokurikuler >= 0 && data.grades.kokurikuler <= 100;
     }
 
     function isValidAttendance(data) {

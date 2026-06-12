@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { 
   Eye, 
@@ -20,6 +20,9 @@ import {
   Sparkles,
   ChevronRight
 } from 'lucide-react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import { Student } from '../types';
 import { INITIAL_STUDENTS } from '../data';
 import studentImg from '../assets/images/student_login_preview_1781192210124.jpg';
 
@@ -43,6 +46,34 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
   const [studentRememberMe, setStudentRememberMe] = useState(true);
   const [studentError, setStudentError] = useState('');
   const [isStudentLoading, setIsStudentLoading] = useState(false);
+  const [students, setStudents] = useState<Student[]>(INITIAL_STUDENTS);
+
+  useEffect(() => {
+    async function fetchStudents() {
+      try {
+        const snap = await getDocs(collection(db, 'students'));
+        if (snap.size > 0) {
+          const list: Student[] = [];
+          snap.forEach(sDoc => {
+            const data = sDoc.data() as Student;
+            list.push(data);
+          });
+          
+          // Merge with INITIAL_STUDENTS so both original baseline and newly created students exist
+          const merged = [...list];
+          INITIAL_STUDENTS.forEach(initS => {
+            if (!merged.some(s => s.id === initS.id || s.nisn === initS.nisn)) {
+              merged.push(initS);
+            }
+          });
+          setStudents(merged);
+        }
+      } catch (err) {
+        console.error("Gagal memuat siswa dari Cloud Firestore:", err);
+      }
+    }
+    fetchStudents();
+  }, []);
 
   // --- Teacher Submit Handler ---
   const handleTeacherSubmit = (e: React.FormEvent) => {
@@ -88,8 +119,8 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
     setTimeout(() => {
       setIsStudentLoading(false);
       
-      // Match NISN from INITIAL_STUDENTS
-      const matchedStudent = INITIAL_STUDENTS.find(s => s.nisn === studentNisn);
+      // Match NISN from students state (which includes Firestore data)
+      const matchedStudent = students.find(s => s.nisn === studentNisn);
       if (matchedStudent) {
         onLoginSuccess(matchedStudent.email, 'student', matchedStudent.id);
       } else {
@@ -115,7 +146,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
     setIsStudentLoading(true);
     setTimeout(() => {
       setIsStudentLoading(false);
-      const student = INITIAL_STUDENTS.find(s => s.nisn === nisn);
+      const student = students.find(s => s.nisn === nisn);
       if (student) {
         onLoginSuccess(student.email, 'student', student.id);
       }
@@ -453,7 +484,7 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-450 text-slate-500 block mb-1">Klik nama siswa untuk masuk demo instan:</span>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {INITIAL_STUDENTS.slice(0, 4).map((student) => (
+                    {students.slice(0, 4).map((student) => (
                       <button
                         key={student.id}
                         type="button"

@@ -54,10 +54,10 @@
       "properties": {
         "id": { "type": "string" },
         "studentId": { "type": "string" },
-        "subjects": { "type": "object" },
+        "grades": { "type": "object" },
         "updatedAt": { "type": "string" }
       },
-      "required": ["id", "studentId", "subjects"]
+      "required": ["studentId", "grades"]
     },
     "Attendance": {
       "title": "Attendance",
