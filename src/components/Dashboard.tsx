@@ -10,7 +10,7 @@ import {
   Users, BookOpen, Clock, Plus, Trash2, Edit2, Printer, Search,
   Check, AlertTriangle, User, Mail, ShieldCheck, HelpCircle,
   Calendar, Award, Phone, Save, ClipboardList, Info, GraduationCap, UserCheck,
-  Download, FileDown, Upload, Eye, Cloud, HardDrive, RefreshCw, Sliders
+  Download, FileDown, Upload, Eye, Cloud, HardDrive, RefreshCw, Sliders, Camera
 } from 'lucide-react';
 import {
   Student, StudentGrade, Announcement, AttendanceDay,
@@ -593,7 +593,8 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     gender: 'Laki-laki' as 'Laki-laki' | 'Perempuan',
     email: '',
     parentName: '',
-    parentPhone: ''
+    parentPhone: '',
+    avatar: ''
   });
 
   const openAddStudentModal = () => {
@@ -605,7 +606,8 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       gender: 'Laki-laki',
       email: '',
       parentName: '',
-      parentPhone: ''
+      parentPhone: '',
+      avatar: ''
     });
     setIsStudentModalOpen(true);
   };
@@ -619,9 +621,30 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       gender: student.gender,
       email: student.email || '',
       parentName: student.parentName || '',
-      parentPhone: student.parentPhone || ''
+      parentPhone: student.parentPhone || '',
+      avatar: student.avatar || ''
     });
     setIsStudentModalOpen(true);
+  };
+
+  const handleStudentPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('File foto terlalu besar. Maksimal ukuran file adalah 2MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setStudentForm(prev => ({
+            ...prev,
+            avatar: event.target!.result as string
+          }));
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleDeleteStudent = (studentId: string) => {
@@ -660,7 +683,10 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
         gender: studentForm.gender,
         email: studentForm.email.trim() || `${studentForm.name.toLowerCase().replace(/\s+/g, '.')}@sekolah.sch.id`,
         parentName: studentForm.parentName.trim(),
-        parentPhone: studentForm.parentPhone.trim()
+        parentPhone: studentForm.parentPhone.trim(),
+        avatar: studentForm.avatar.trim() || editingStudent.avatar || (studentForm.gender === 'Laki-laki' 
+          ? 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
+          : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80')
       };
       setStudents(prev => prev.map(s => s.id === editingStudent.id ? updatedStudent : s));
       setDoc(doc(db, 'students', editingStudent.id), updatedStudent).catch(err => handleFirestoreError(err, OperationType.WRITE, `students/${editingStudent.id}`));
@@ -673,9 +699,9 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
         nisn: studentForm.nisn.trim(),
         gender: studentForm.gender,
         className: studentForm.className.trim() || profile.className,
-        avatar: studentForm.gender === 'Laki-laki' 
+        avatar: studentForm.avatar.trim() || (studentForm.gender === 'Laki-laki' 
           ? 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
-          : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
+          : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80'),
         email: studentForm.email.trim() || `${studentForm.name.toLowerCase().replace(/\s+/g, '.')}@sekolah.sch.id`,
         parentName: studentForm.parentName.trim(),
         parentPhone: studentForm.parentPhone.trim()
@@ -3142,6 +3168,57 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
               {/* Form Body */}
               <form onSubmit={handleSaveStudent} className="flex-1 overflow-y-auto p-6 space-y-4">
                 
+                {/* Row 0: Foto Profil / Avatar */}
+                <div className="flex flex-col sm:flex-row items-center gap-4 p-4 bg-slate-50/55 border border-slate-200/60 rounded-lg">
+                  <div className="relative group">
+                    <img
+                      src={studentForm.avatar || (studentForm.gender === 'Laki-laki' 
+                        ? 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80'
+                        : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80')}
+                      alt="Student Avatar Preview"
+                      className="w-16 h-16 rounded-full object-cover border-2 border-indigo-100 shadow-xs"
+                      referrerPolicy="no-referrer"
+                    />
+                    <label 
+                      htmlFor="student-avatar-input"
+                      className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer text-white"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </label>
+                  </div>
+                  <div className="flex-1 text-center sm:text-left space-y-1">
+                    <span className="text-xs font-bold text-slate-700 block">Foto Profil Siswa</span>
+                    <span className="text-[10px] text-slate-400 block font-semibold leading-normal">
+                      Mendukung format gambar (PNG, JPG, JPEG) dengan ukuran maksimal 2MB.
+                    </span>
+                    <div className="flex items-center justify-center sm:justify-start gap-2 pt-1.5">
+                      <label
+                        htmlFor="student-avatar-input"
+                        className="text-[10px] text-white bg-[#00288e] hover:bg-slate-800 font-bold px-3 py-1.5 rounded transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Unggah Foto</span>
+                      </label>
+                      <input
+                        id="student-avatar-input"
+                        type="file"
+                        accept="image/*"
+                        onChange={handleStudentPhotoChange}
+                        className="hidden"
+                      />
+                      {studentForm.avatar && (
+                        <button
+                          type="button"
+                          onClick={() => setStudentForm(prev => ({ ...prev, avatar: '' }))}
+                          className="text-[10px] text-rose-600 bg-rose-50 hover:bg-rose-100 font-bold px-3 py-1.5 rounded transition cursor-pointer border border-rose-100"
+                        >
+                          Atur Ulang
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Row 1: Nama Lengkap */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wide flex items-center">
