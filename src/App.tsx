@@ -118,6 +118,7 @@ export default function App() {
               userEmail={userEmail}
               onLogout={handleLogout}
               teacherAvatar={teacherAvatarState}
+              onAvatarUpload={handleAvatarUpload}
             />
           </motion.div>
         )}

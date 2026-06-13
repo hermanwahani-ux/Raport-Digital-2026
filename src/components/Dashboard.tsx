@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   LayoutDashboard, Bell, FileText, CheckSquare, Settings,
@@ -46,9 +46,33 @@ interface DashboardProps {
   userEmail: string;
   onLogout: () => void;
   teacherAvatar: string;
+  onAvatarUpload?: (newBase64: string) => void;
 }
 
-export default function Dashboard({ userEmail, onLogout, teacherAvatar }: DashboardProps) {
+export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatarUpload }: DashboardProps) {
+  const teacherFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleTeacherPhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert('File foto terlalu besar. Maksimal ukuran file adalah 2MB.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const base64String = event.target.result as string;
+          if (onAvatarUpload) {
+            onAvatarUpload(base64String);
+            alert('Foto profil wali kelas berhasil disimpan secara otomatis!');
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // --- Active Tab State ---
   const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings' | 'subject_grades'>('overview');
 
@@ -1218,12 +1242,28 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
         {/* Teacher Mini Profile Card */}
         <div className="p-4 mx-3 my-4 bg-blue-900/40 rounded-lg border border-blue-800/60 flex items-center space-x-3 text-left">
-          <img
-            src={teacherAvatar}
-            alt="Teacher"
-            className="w-10 h-10 rounded-full object-cover border border-blue-700"
-            referrerPolicy="no-referrer"
-          />
+          <div 
+            className="relative cursor-pointer group shrink-0" 
+            onClick={() => teacherFileInputRef.current?.click()}
+            title="Klik untuk mengubah foto profil wali kelas"
+          >
+            <input
+              type="file"
+              ref={teacherFileInputRef}
+              className="hidden"
+              accept="image/*"
+              onChange={handleTeacherPhotoChange}
+            />
+            <img
+              src={teacherAvatar}
+              alt="Teacher"
+              className="w-10 h-10 rounded-full object-cover border border-blue-700 group-hover:brightness-90 transition duration-150"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition duration-150">
+              <Camera className="w-3.5 h-3.5 text-white" />
+            </div>
+          </div>
           <div className="overflow-hidden">
             <h4 className="text-sm font-bold truncate text-white">{profile.name}</h4>
             <span className="text-[11px] text-blue-200 truncate block">{profile.className} • {profile.school}</span>
