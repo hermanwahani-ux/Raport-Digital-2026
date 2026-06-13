@@ -11,7 +11,7 @@ import {
   Check, AlertTriangle, User, Mail, ShieldCheck, HelpCircle,
   Calendar, Award, Phone, Save, ClipboardList, Info, GraduationCap, UserCheck,
   Download, FileDown, Upload, Eye, Cloud, HardDrive, RefreshCw, Sliders, Camera,
-  Inbox, Share2
+  Inbox, Share2, ExternalLink
 } from 'lucide-react';
 import {
   Student, StudentGrade, Announcement, AttendanceDay,
@@ -527,27 +527,27 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       }
     } catch (err: any) {
       console.error("Connect Google Drive error:", err);
+      
+      const isIframe = typeof window !== 'undefined' && window.self !== window.top;
       const isClosedByUser = err?.code === 'auth/popup-closed-by-user' || 
                              err?.message?.includes('popup-closed-by-user') ||
                              err?.message?.includes('closed by user');
                              
-      if (isClosedByUser) {
+      if (isIframe) {
         alert(
-          "Sambungan Google Drive Dibatalkan.\n\n" +
+          "Penyambungan Google Drive Terkendala Kebijakan Iframe Browser!\n\n" +
+          "Sistem mendeteksi Anda sedang berada di mode pratinjau (iframe) AI Studio. Pembatasan keamanan browser memblokir pop-up/cookies interaksi Google Drive di dalam iframe.\n\n" +
+          "Solusi:\n" +
+          "Silakan klik tombol 'Buka di Tab Baru' (Open in new tab) di bagian atas dashboard untuk membuka aplikasi di tab mandiri, lalu klik 'Hubungkan Google Drive' kembali dengan lancar!"
+        );
+      } else if (isClosedByUser) {
+        alert(
+          "Sambungan Google Drive Terputus atau Dibatalkan.\n\n" +
           "Sistem mendeteksi jendela popup ditutup sebelum penyambungan akun selesai.\n\n" +
-          "Silakan klik 'Sambungkan Google Drive' lagi dan pastikan Anda memilih akun Google Anda di dalam popup."
+          "Silakan klik 'Hubungkan Google Drive' lagi dan pastikan Anda tidak menutup jendela popup sebelum memilih akun Anda."
         );
       } else {
-        const isIframeError = window.self !== window.top;
-        if (isIframeError) {
-          alert(
-            "Gagal menghubungkan Google Drive.\n\n" +
-            "Hal ini terjadi karena pembatasan keamanan peramban terhadap pop-up di dalam iframe (mode pratinjau).\n\n" +
-            "Silakan klik tombol 'Buka di Tab Baru' (Open in new tab) di sudut kanan atas layar Anda untuk menghubungkan akun Google Anda dengan lancar!"
-          );
-        } else {
-          alert("Gagal menghubungkan Google Drive: " + (err?.message || "Mohon periksa kembali izin akses akun Anda."));
-        }
+        alert("Gagal menghubungkan Google Drive: " + (err?.message || "Mohon periksa kembali izin akses akun Anda."));
       }
     } finally {
       setIsDriveLoading(false);
@@ -1327,6 +1327,30 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
         {/* SCROLLABLE MODULE VIEWS */}
         <div className="flex-1 p-6 sm:p-8 space-y-6">
+
+          {/* Iframe Popup Support Alert Banner */}
+          {typeof window !== 'undefined' && window.self !== window.top && !driveToken && (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-left shadow-sm">
+              <div className="flex items-start space-x-3">
+                <div className="p-2 bg-amber-100 text-amber-800 rounded-lg shrink-0 mt-0.5 sm:mt-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-700 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-extrabold text-amber-900 uppercase tracking-wide">Mode Pratinjau Terdeteksi (Pembatasan Iframe Browser)</h4>
+                  <p className="text-[11.5px] text-amber-800 mt-1 font-semibold leading-relaxed">
+                    Kebijakan keamanan peramban memblokir pop-up integrasi Google Drive ketika berjalan di dalam iframe pratinjau. Silakan gunakan tautan mandiri di samping untuk kemudahan menghubungkan akun Anda secara penuh dan aman!
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => window.open(window.location.href, '_blank')}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-extrabold rounded-lg shadow-sm duration-150 shrink-0 w-full sm:w-auto text-center cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Buka di Tab Baru</span>
+              </button>
+            </div>
+          )}
 
           {viewMode === 'student' ? (
             /* COMPREHENSIVE HIGH-FIDELITY STUDENT PORTAL */
