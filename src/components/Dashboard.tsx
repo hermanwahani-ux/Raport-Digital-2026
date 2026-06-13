@@ -51,6 +51,10 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   // --- Active Tab State ---
   const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings' | 'subject_grades'>('overview');
 
+  // --- Cloud Firebase Sync States ---
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error'>('syncing');
+  const [cloudErrorMessage, setCloudErrorMessage] = useState<string | null>(null);
+
   // --- Subject Grades Inbox States ---
   const [subjectGradesList, setSubjectGradesList] = useState<SubjectGrade[]>([]);
   const [isSyncingAllDrive, setIsSyncingAllDrive] = useState(false);
@@ -65,6 +69,8 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
   // Subscribe to real-time Subject Grades uploaded by outside teachers
   useEffect(() => {
+    if (cloudSyncStatus !== 'synced') return;
+
     const path = 'subjectGrades';
     const unsubscribe = onSnapshot(collection(db, path), (snapshot) => {
       const list: SubjectGrade[] = [];
@@ -75,10 +81,14 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       list.sort((a, b) => b.id.localeCompare(a.id));
       setSubjectGradesList(list);
     }, (error) => {
-      console.error("Gagal memuat Nilai Mapel Masuk:", error);
+      try {
+        handleFirestoreError(error, OperationType.LIST, path);
+      } catch (wrappedError) {
+        console.error("Gagal memuat Nilai Mapel Masuk:", error);
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [cloudSyncStatus]);
 
   // --- Persistent States from LocalStorage ---
   const [profile, setProfile] = useState<UserProfile>(() => {
@@ -163,6 +173,16 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const [driveUser, setDriveUser] = useState<FirebaseUser | null>(null);
   const [driveToken, setDriveToken] = useState<string | null>(null);
   const [isDriveLoading, setIsDriveLoading] = useState(false);
+  const [useCustomFolder, setUseCustomFolder] = useState<boolean>(() => {
+    const saved = localStorage.getItem('waliku_use_custom_folder');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [customFolderUrl, setCustomFolderUrl] = useState<string>(() => {
+    return localStorage.getItem('waliku_custom_folder_url') || 'https://drive.google.com/drive/folders/18XOtbRlWtoDNZR9C4Llk8JRQ8v2ACAH4?usp=sharing';
+  });
+  const [customFolderId, setCustomFolderId] = useState<string | null>(() => {
+    return localStorage.getItem('waliku_custom_folder_id') || '18XOtbRlWtoDNZR9C4Llk8JRQ8v2ACAH4';
+  });
   const [driveFolderId, setDriveFolderId] = useState<string | null>(() => localStorage.getItem('waliku_drive_folder_id'));
   const [driveFiles, setDriveFiles] = useState<{ id: string; name: string; size?: string; createdTime?: string }[]>([]);
   const [driveSearch, setDriveSearch] = useState('');
@@ -171,6 +191,38 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const [targetSemesterForDriveImport, setTargetSemesterForDriveImport] = useState<1 | 2 | null>(null);
   const [syncingReports, setSyncingReports] = useState<{ [id: string]: boolean }>({});
   const [bulkSyncing, setBulkSyncing] = useState(false);
+
+  const extractDriveFolderId = (urlOrId: string): string => {
+    if (!urlOrId) return '';
+    const trimmed = urlOrId.trim();
+    const folderMatch = trimmed.match(/\/folders\/([a-zA-Z0-9-_]{25,50})/);
+    if (folderMatch && folderMatch[1]) {
+      return folderMatch[1];
+    }
+    const idMatch = trimmed.match(/[?&]id=([a-zA-Z0-9-_]{25,50})/);
+    if (idMatch && idMatch[1]) {
+      return idMatch[1];
+    }
+    if (/^[a-zA-Z0-9-_]{25,50}$/.test(trimmed)) {
+      return trimmed;
+    }
+    return '';
+  };
+
+  const handleUpdateCustomFolder = (urlOrId: string) => {
+    const parsedId = extractDriveFolderId(urlOrId);
+    if (parsedId) {
+      setCustomFolderUrl(urlOrId);
+      setCustomFolderId(parsedId);
+      localStorage.setItem('waliku_use_custom_folder', 'true');
+      localStorage.setItem('waliku_custom_folder_url', urlOrId);
+      localStorage.setItem('waliku_custom_folder_id', parsedId);
+      setUseCustomFolder(true);
+      alert("Link Folder Google Drive Kustom berhasil dikonfigurasi! Semua unggahan akan dikirim langsung ke folder tersebut.");
+    } else {
+      alert("Tautan atau ID folder tidak valid. Pastikan tautan Google Drive berformat: https://drive.google.com/drive/folders/... atau tempel ID foldernya langsung.");
+    }
+  };
 
   // Authenticate Google Drive on state initialization
   useEffect(() => {
@@ -186,10 +238,6 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     );
     return () => unsubscribe();
   }, []);
-
-  // --- Cloud Firebase Sync States ---
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error'>('syncing');
-  const [cloudErrorMessage, setCloudErrorMessage] = useState<string | null>(null);
 
   // Authenticate & Load/Seed Firebase Firestore
   useEffect(() => {
@@ -479,15 +527,27 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
       }
     } catch (err: any) {
       console.error("Connect Google Drive error:", err);
-      const isIframeError = window.self !== window.top;
-      if (isIframeError) {
+      const isClosedByUser = err?.code === 'auth/popup-closed-by-user' || 
+                             err?.message?.includes('popup-closed-by-user') ||
+                             err?.message?.includes('closed by user');
+                             
+      if (isClosedByUser) {
         alert(
-          "Gagal menghubungkan Google Drive.\n\n" +
-          "Hal ini terjadi karena pembatasan keamanan peramban terhadap pop-up di dalam iframe (mode pratinjau).\n\n" +
-          "Silakan klik tombol 'Buka di Tab Baru' (Open in new tab) di sudut kanan atas layar Anda untuk menghubungkan akun Google Anda dengan lancar!"
+          "Sambungan Google Drive Dibatalkan.\n\n" +
+          "Sistem mendeteksi jendela popup ditutup sebelum penyambungan akun selesai.\n\n" +
+          "Silakan klik 'Sambungkan Google Drive' lagi dan pastikan Anda memilih akun Google Anda di dalam popup."
         );
       } else {
-        alert("Gagal menghubungkan Google Drive: " + (err?.message || "Mohon periksa kembali izin akses akun Anda."));
+        const isIframeError = window.self !== window.top;
+        if (isIframeError) {
+          alert(
+            "Gagal menghubungkan Google Drive.\n\n" +
+            "Hal ini terjadi karena pembatasan keamanan peramban terhadap pop-up di dalam iframe (mode pratinjau).\n\n" +
+            "Silakan klik tombol 'Buka di Tab Baru' (Open in new tab) di sudut kanan atas layar Anda untuk menghubungkan akun Google Anda dengan lancar!"
+          );
+        } else {
+          alert("Gagal menghubungkan Google Drive: " + (err?.message || "Mohon periksa kembali izin akses akun Anda."));
+        }
       }
     } finally {
       setIsDriveLoading(false);
@@ -505,6 +565,9 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   };
 
   const ensureBackupFolder = async (token: string) => {
+    if (useCustomFolder && customFolderId) {
+      return customFolderId;
+    }
     try {
       const folderName = `WaliKu Raport Online - ${profile.className}`;
       const fId = await createDriveFolder(token, folderName);
@@ -2336,11 +2399,82 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                       </p>
                     )}
                     {driveToken && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 font-medium">
-                        <span className="flex items-center space-x-1.5 font-bold text-[#00288e]">
-                          <HardDrive className="w-3.5 h-3.5 shrink-0" />
-                          <span>Folder Backup: WaliKu Raport Online - {profile.className}</span>
-                        </span>
+                      <div className="mt-4 p-4 bg-white border border-slate-200 rounded-lg space-y-3 max-w-xl">
+                        <div className="flex items-center justify-between border-b pb-2">
+                          <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                            <Sliders className="w-4 h-4 text-indigo-600" />
+                            <span>Pengaturan Folder Penyimpanan Drive</span>
+                          </span>
+                        </div>
+                        
+                        <div className="flex flex-col gap-2 text-xs">
+                          <label className="flex items-center space-x-2 font-bold text-slate-600 cursor-pointer">
+                            <input 
+                              type="radio" 
+                              name="folder_mode" 
+                              checked={!useCustomFolder} 
+                              onChange={() => {
+                                setUseCustomFolder(false);
+                                localStorage.setItem('waliku_use_custom_folder', 'false');
+                              }}
+                              className="text-indigo-600 focus:ring-indigo-500" 
+                            />
+                            <span>Folder Otomatis ("WaliKu Raport Online - {profile.className}")</span>
+                          </label>
+
+                          <label className="flex items-center space-x-2 font-bold text-slate-600 cursor-pointer">
+                            <input 
+                              type="radio" 
+                              name="folder_mode" 
+                              checked={useCustomFolder} 
+                              onChange={() => {
+                                setUseCustomFolder(true);
+                                localStorage.setItem('waliku_use_custom_folder', 'true');
+                              }}
+                              className="text-indigo-600 focus:ring-indigo-500" 
+                            />
+                            <span>Folder Kustom Link Google Drive Anda</span>
+                          </label>
+                        </div>
+
+                        {useCustomFolder && (
+                          <div className="space-y-2 pt-2 border-t border-slate-100">
+                            <div className="flex gap-2">
+                              <input 
+                                type="text" 
+                                value={customFolderUrl}
+                                onChange={(e) => setCustomFolderUrl(e.target.value)}
+                                placeholder="Tempel link folder Google Drive Anda..."
+                                className="block w-full text-xs font-medium border border-gray-300 rounded px-2.5 py-1.5 focus:border-indigo-500 focus:ring-indigo-500 bg-slate-50 text-slate-800"
+                              />
+                              <button 
+                                onClick={() => handleUpdateCustomFolder(customFolderUrl)}
+                                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded duration-150 cursor-pointer text-xs shrink-0"
+                              >
+                                Simpan Link
+                              </button>
+                            </div>
+                            <div className="flex items-center justify-between bg-indigo-50/50 p-2.5 rounded border border-indigo-105 text-[10.5px] text-indigo-950 font-medium">
+                              <span className="flex items-center space-x-1 truncate mr-2">
+                                <span className="inline-block w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce shrink-0" />
+                                <span className="truncate">Terhubung ke ID: <strong>{customFolderId || 'Belum diatur'}</strong></span>
+                              </span>
+                              <a 
+                                href={customFolderUrl} 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                className="text-[#00288e] hover:underline font-bold shrink-0"
+                              >
+                                Buka Folder ↗
+                              </a>
+                            </div>
+                          </div>
+                        )}
+                        {!useCustomFolder && (
+                          <div className="text-[11px] text-slate-400 font-medium bg-slate-50 p-2.5 rounded border border-slate-200">
+                            📁 File akan diunggah ke folder sistem otomatis kesiswaan Anda.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2821,9 +2955,24 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                     <HardDrive className="w-5 h-5 text-indigo-600" />
                     <span>Integrasi Google Drive Wali Kelas</span>
                   </h4>
-                  <p className="text-xs text-gray-500 leading-relaxed max-w-2xl">
-                    Penyimpanan cloud untuk semua setor draf nilai mata pelajaran kesiswaan. Hubungkan akun Google Sekolah Anda di panel Ringkasan untuk secara otomatis menyimpan berkas laporan guru ke Drive kesiswaan bersama.
+                  <p className="text-xs text-gray-500 leading-relaxed max-w-2xl bg-white">
+                    Penyimpanan cloud untuk semua draf nilai mata pelajaran kesiswaan. Diarahkan langsung ke folder tujuan yang dikonfigurasi.
                   </p>
+                  {driveToken && (
+                    <div className="text-[11px] font-medium text-slate-500 flex items-center space-x-1 pt-1">
+                      <span>📁 Lokasi Penyimpanan Aktif:</span>
+                      {useCustomFolder ? (
+                        <span className="text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1">
+                          <span>Folder Kustom (ID: {customFolderId})</span>
+                          <a href={customFolderUrl} target="_blank" rel="noreferrer" className="underline hover:text-indigo-800">Buka ↗</a>
+                        </span>
+                      ) : (
+                        <span className="text-[#00288e] font-bold bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                          Otomatis (WaliKu Raport Online - {profile.className})
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   {driveToken ? (
