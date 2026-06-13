@@ -70,8 +70,8 @@ export default function Hero({ onCtaclick, teacherAvatar, onAvatarUpload }: Hero
               Portal Raport Digital
             </h1>
 
-            <p className="font-sans text-base sm:text-lg text-gray-600 leading-relaxed max-w-xl">
-              Portal Raport Digital membantu guru wali kelas mengelola pengumuman digital, raport online, dan absensi siswa dalam satu platform yang aman dan efisien.
+            <p className="font-sans text-base sm:text-lg text-gray-600 leading-relaxed max-w-xl italic">
+              Portal raport digital membantu guru wali kelas mengelola pengumuman digital, raport online, rekap absen semester, penyetoran nilai mata pelajaran, perkembangan akademik siswa dalam satu platform yang aman dan efisien. Transformasi manajemen administrasi guru digital.
             </p>
 
             {/* Author Badge precisely styled to screen */}

@@ -86,6 +86,23 @@
         "uploadedBy": { "type": "string" }
       },
       "required": ["id", "studentId", "fileName", "fileSize", "uploadDate", "fileData"]
+    },
+    "SubjectGrade": {
+      "title": "SubjectGrade",
+      "description": "Subject grades document uploaded by other teachers for the homeroom teacher.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subject": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "fileName": { "type": "string" },
+        "fileSize": { "type": "string" },
+        "uploadDate": { "type": "string" },
+        "fileData": { "type": "string" },
+        "driveFileId": { "type": "string" },
+        "driveFileLink": { "type": "string" }
+      },
+      "required": ["id", "subject", "teacherName", "fileName", "fileSize", "uploadDate", "fileData"]
     }
   },
   "firestore": {
@@ -112,6 +129,10 @@
     "uploadedReports/{reportId}": {
       "schema": "UploadedReport",
       "description": "Base64 encoded PDF academic reports synced block storage representations."
+    },
+    "subjectGrades/{gradeId}": {
+      "schema": "SubjectGrade",
+      "description": "Subject grades documents shared by outside teachers."
     }
   }
 }

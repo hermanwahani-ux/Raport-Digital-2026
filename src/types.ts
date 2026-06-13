@@ -56,4 +56,18 @@ export interface UserProfile {
   academicYear: string;
   avatar: string;
   email: string;
+  teacherPin?: string;
+  isPinLocked?: boolean;
+}
+
+export interface SubjectGrade {
+  id: string;
+  subject: string;
+  teacherName: string;
+  fileName: string;
+  fileSize: string;
+  uploadDate: string;
+  fileData: string;
+  driveFileId?: string;
+  driveFileLink?: string;
 }

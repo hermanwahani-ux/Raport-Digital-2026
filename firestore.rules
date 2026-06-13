@@ -89,7 +89,21 @@ service cloud.firestore {
              data.fileSize is string && data.fileSize.size() <= 30 &&
              data.uploadDate is string && data.uploadDate.size() <= 50 &&
              data.fileData is string && data.fileData.size() <= 10000000 &&
-             (!data.keys().hasAll(['semester']) || (data.semester is int && (data.semester == 1 || data.semester == 2)));
+             (!data.keys().hasAll(['semester']) || (data.semester == 1 || data.semester == 2));
+     }
+
+    function isValidSubjectGrade(data) {
+      return data.keys().hasAll(['id', 'subject', 'teacherName', 'fileName', 'fileSize', 'uploadDate', 'fileData']) &&
+             data.keys().size() >= 7 && data.keys().size() <= 9 &&
+             data.id is string && isValidId(data.id) &&
+             data.subject is string && data.subject.size() <= 150 &&
+             data.teacherName is string && data.teacherName.size() <= 150 &&
+             data.fileName is string && data.fileName.size() <= 255 &&
+             data.fileSize is string && data.fileSize.size() <= 50 &&
+             data.uploadDate is string && data.uploadDate.size() <= 100 &&
+             data.fileData is string && data.fileData.size() <= 10000000 &&
+             (!data.keys().hasAll(['driveFileId']) || data.driveFileId is string) &&
+             (!data.keys().hasAll(['driveFileLink']) || data.driveFileLink is string);
     }
 
     // Teachers Profile Collection Rule
@@ -138,6 +152,14 @@ service cloud.firestore {
       allow create: if isValidUploadedReport(incoming()) && isValidId(reportId);
       allow update: if isValidUploadedReport(incoming()) && isValidId(reportId);
       allow delete: if isValidId(reportId);
+    }
+
+    // Subject Grades shared by outside Teachers
+    match /subjectGrades/{gradeId} {
+      allow read: if true;
+      allow create: if isValidSubjectGrade(incoming()) && isValidId(gradeId);
+      allow update: if isValidSubjectGrade(incoming()) && isValidId(gradeId);
+      allow delete: if isValidId(gradeId);
     }
   }
 }

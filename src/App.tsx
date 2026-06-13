@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import Features from './components/Features';
+import SubjectGradesPortal from './components/SubjectGradesPortal';
 import LoginForm from './components/LoginForm';
 import Footer from './components/Footer';
 import Dashboard from './components/Dashboard';
@@ -94,6 +95,9 @@ export default function App() {
 
             {/* Solution Features Information Grid */}
             <Features />
+
+            {/* Passwordless Subject Grades Upload Section */}
+            <SubjectGradesPortal />
 
             {/* Integrated Access Portal Section */}
             <LoginForm onLoginSuccess={handleLoginSuccess} />

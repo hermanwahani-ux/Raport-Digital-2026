@@ -24,7 +24,7 @@ export default function Navbar({
   const [activeTab, setActiveTab] = useState('Beranda');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const menuItems = ['Beranda', 'Fitur', 'Tentang', 'Kontak'];
+  const menuItems = ['Beranda', 'Fitur', 'Setor Nilai', 'Tentang', 'Kontak'];
 
   const handleNavClick = (item: string) => {
     setActiveTab(item);
@@ -34,6 +34,7 @@ export default function Navbar({
     const sectionMap: { [key: string]: string } = {
       'Beranda': 'hero',
       'Fitur': 'features',
+      'Setor Nilai': 'setor-nilai',
       'Tentang': 'about',
       'Kontak': 'footer'
     };

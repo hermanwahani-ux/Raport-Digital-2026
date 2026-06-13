@@ -10,11 +10,12 @@ import {
   Users, BookOpen, Clock, Plus, Trash2, Edit2, Printer, Search,
   Check, AlertTriangle, User, Mail, ShieldCheck, HelpCircle,
   Calendar, Award, Phone, Save, ClipboardList, Info, GraduationCap, UserCheck,
-  Download, FileDown, Upload, Eye, Cloud, HardDrive, RefreshCw, Sliders, Camera
+  Download, FileDown, Upload, Eye, Cloud, HardDrive, RefreshCw, Sliders, Camera,
+  Inbox, Share2
 } from 'lucide-react';
 import {
   Student, StudentGrade, Announcement, AttendanceDay,
-  UserProfile, AttendanceStatus, SubjectGrades
+  UserProfile, AttendanceStatus, SubjectGrades, SubjectGrade
 } from '../types';
 import {
   downloadSingleStudentRaforPDF,
@@ -38,7 +39,7 @@ import {
 } from '../utils/googleDrive';
 import { User as FirebaseUser } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType, ensureSignedInUser } from '../lib/firebase';
-import { doc, getDoc, getDocs, setDoc, deleteDoc, collection } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
 
 interface DashboardProps {
   userEmail: string;
@@ -48,13 +49,35 @@ interface DashboardProps {
 
 export default function Dashboard({ userEmail, onLogout, teacherAvatar }: DashboardProps) {
   // --- Active Tab State ---
-  const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings' | 'subject_grades'>('overview');
+
+  // --- Subject Grades Inbox States ---
+  const [subjectGradesList, setSubjectGradesList] = useState<SubjectGrade[]>([]);
+  const [isSyncingAllDrive, setIsSyncingAllDrive] = useState(false);
+  const [syncingItemId, setSyncingItemId] = useState<string | null>(null);
 
   // --- Real-time Clock ---
   const [currentTime, setCurrentTime] = useState(new Date());
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // Subscribe to real-time Subject Grades uploaded by outside teachers
+  useEffect(() => {
+    const path = 'subjectGrades';
+    const unsubscribe = onSnapshot(collection(db, path), (snapshot) => {
+      const list: SubjectGrade[] = [];
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as SubjectGrade);
+      });
+      // Sort by upload date or ID descending
+      list.sort((a, b) => b.id.localeCompare(a.id));
+      setSubjectGradesList(list);
+    }, (error) => {
+      console.error("Gagal memuat Nilai Mapel Masuk:", error);
+    });
+    return () => unsubscribe();
   }, []);
 
   // --- Persistent States from LocalStorage ---
@@ -145,6 +168,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const [driveSearch, setDriveSearch] = useState('');
   const [isDrivePickerOpen, setIsDrivePickerOpen] = useState(false);
   const [targetStudentForDriveImport, setTargetStudentForDriveImport] = useState<string | null>(null);
+  const [targetSemesterForDriveImport, setTargetSemesterForDriveImport] = useState<1 | 2 | null>(null);
   const [syncingReports, setSyncingReports] = useState<{ [id: string]: boolean }>({});
   const [bulkSyncing, setBulkSyncing] = useState(false);
 
@@ -331,6 +355,27 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   });
   const [isDragOver, setIsDragOver] = useState(false);
 
+  // --- Security PIN Mode Guru Lock states ---
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+
+  const handleSwitchToTeacherMode = () => {
+    if (profile.isPinLocked !== false) {
+      setIsPinModalOpen(true);
+      setPinInput('');
+      setPinError('');
+    } else {
+      setViewMode('teacher');
+      localStorage.setItem('waliku_role', 'teacher');
+    }
+  };
+
+  const handleSwitchToStudentMode = () => {
+    setViewMode('student');
+    localStorage.setItem('waliku_role', 'student');
+  };
+
   // --- Sub-states ---
   // Search & Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -378,6 +423,8 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
           }
         }
 
+        const existingReport = uploadedReports.find(r => r.studentId === studentId && (r.semester || 2) === semesterToUse);
+
         const newReport = {
           id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
           studentId: studentId,
@@ -387,7 +434,15 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
           fileData: base64,
           semester: semesterToUse
         };
-        setUploadedReports(prev => [newReport, ...prev]);
+
+        if (existingReport) {
+          setUploadedReports(prev => [newReport, ...prev.filter(r => r.id !== existingReport.id)]);
+          deleteDoc(doc(db, 'uploadedReports', existingReport.id)).catch(err => {
+            console.warn("Could not delete old report on revision:", err);
+          });
+        } else {
+          setUploadedReports(prev => [newReport, ...prev]);
+        }
         setDoc(doc(db, 'uploadedReports', newReport.id), newReport).catch(err => handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${newReport.id}`));
       };
       reader.readAsDataURL(file);
@@ -459,6 +514,112 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     } catch (err) {
       console.error("Error creating/getting backup folder:", err);
       throw err;
+    }
+  };
+
+  // --- Subject Grades Management Business Logic ---
+  const handleDownloadSubjectGrade = (item: SubjectGrade) => {
+    try {
+      const link = document.createElement('a');
+      link.href = item.fileData;
+      link.download = item.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Gagal mendownload berkas nilai mapel:", err);
+      alert("Terjadi masalah saat mendownload berkas nilai.");
+    }
+  };
+
+  const handleSyncSubjectGradeToDrive = async (itemId: string) => {
+    if (!driveToken) {
+      alert("Silakan hubungkan akun Google Drive Anda terlebih dahulu melalui tab Ringkasan Kelas!");
+      return;
+    }
+
+    const item = subjectGradesList.find(g => g.id === itemId);
+    if (!item) return;
+
+    setSyncingItemId(itemId);
+    try {
+      const fId = await ensureBackupFolder(driveToken);
+      const res = await uploadFileToDrive(driveToken, item.fileName, item.fileData, fId);
+      
+      // Update the firestore document with the returned Google Drive ID and Link
+      const docRef = doc(db, 'subjectGrades', itemId);
+      await setDoc(docRef, {
+        ...item,
+        driveFileId: res.id,
+        driveFileLink: res.webViewLink || `https://drive.google.com/open?id=${res.id}`
+      });
+
+      alert(`Berhasil mengunggah berkas "${item.fileName}" ke Google Drive!`);
+    } catch (err) {
+      console.error("Gagal mencadangkan berkas ke Google Drive:", err);
+      alert("Terdapat kendala saat mencadangkan dokumen Anda ke Google Drive.");
+    } finally {
+      setSyncingItemId(null);
+    }
+  };
+
+  const handleBulkSyncSubjectGradesToDrive = async () => {
+    if (!driveToken) {
+      alert("Silakan hubungkan akun Google Drive Anda terlebih dahulu melalui tab Ringkasan Kelas.");
+      return;
+    }
+
+    const unsynced = subjectGradesList.filter(item => !item.driveFileId);
+    if (unsynced.length === 0) {
+      alert("Seluruh draf nilai mata pelajaran dalam inbox sudah tercadangkan ke Google Drive!");
+      return;
+    }
+
+    const confirmSync = window.confirm(`Apakah Anda yakin ingin mencadangkan seluruh (${unsynced.length}) dokumen nilai mata pelajaran masuk ke Google Drive?`);
+    if (!confirmSync) return;
+
+    setIsSyncingAllDrive(true);
+    let successCount = 0;
+
+    try {
+      const fId = await ensureBackupFolder(driveToken);
+      
+      for (const item of unsynced) {
+        try {
+          const res = await uploadFileToDrive(driveToken, item.fileName, item.fileData, fId);
+          // Update in Firestore
+          const docRef = doc(db, 'subjectGrades', item.id);
+          await setDoc(docRef, {
+            ...item,
+            driveFileId: res.id,
+            driveFileLink: res.webViewLink || `https://drive.google.com/open?id=${res.id}`
+          });
+          successCount++;
+        } catch (singleErr) {
+          console.error(`Gagal mengunggah ${item.fileName}:`, singleErr);
+        }
+      }
+
+      alert(`Sinkronisasi selesai! ${successCount} dari ${unsynced.length} draf nilai berhasil dicadangkan ke Google Drive.`);
+    } catch (err) {
+      console.error("Gagal melakukan pencadangan otomatis masal:", err);
+      alert("Terjadi kendala sistem pada pencadangan masal.");
+    } finally {
+      setIsSyncingAllDrive(false);
+    }
+  };
+
+  const handleDeleteSubjectGrade = async (itemId: string) => {
+    const isConfirmed = window.confirm("Apakah Anda yakin ingin menghapus dokumen laporan nilai mata pelajaran ini dari inbox?");
+    if (!isConfirmed) return;
+
+    try {
+      const docRef = doc(db, 'subjectGrades', itemId);
+      await deleteDoc(docRef);
+      alert("Dokumen nilai berhasil dihapus.");
+    } catch (err) {
+      console.error("Gagal menghapus dokumen laporan nilai:", err);
+      alert("Gagal menghapus dokumen. Silakan periksa koneksi internet Anda.");
     }
   };
 
@@ -543,9 +704,14 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const handleImportFromDrive = async (fileId: string, fileName: string) => {
     if (!driveToken || !targetStudentForDriveImport) return;
     
-    const input = window.prompt("Import berkas dari Google Drive. Tentukan semester untuk raport ini (Ketik 1 atau 2):", "2");
-    if (input === null) return; // User cancelled
-    const semesterToUse = input === "1" ? 1 : 2; // default to 2
+    let semesterToUse: 1 | 2 = 2;
+    if (targetSemesterForDriveImport !== null) {
+      semesterToUse = targetSemesterForDriveImport;
+    } else {
+      const input = window.prompt("Import berkas dari Google Drive. Tentukan semester untuk raport ini (Ketik 1 atau 2):", "2");
+      if (input === null) return; // User cancelled
+      semesterToUse = input === "1" ? 1 : 2; // default to 2
+    }
 
     setIsDriveLoading(true);
     try {
@@ -561,6 +727,13 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
          semester: semesterToUse
       };
       
+      const existingReport = uploadedReports.find(r => r.studentId === targetStudentForDriveImport && (r.semester || 2) === semesterToUse);
+      if (existingReport) {
+        deleteDoc(doc(db, 'uploadedReports', existingReport.id)).catch(err => {
+          console.warn("Could not delete old report on revision:", err);
+        });
+      }
+
       setUploadedReports(prev => [newReport, ...prev.filter(r => !(r.studentId === targetStudentForDriveImport && (r.semester || 2) === semesterToUse))]);
       setDoc(doc(db, 'uploadedReports', newReport.id), newReport).catch(err => handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${newReport.id}`));
       setIsDrivePickerOpen(false);
@@ -952,6 +1125,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
             { id: 'overview', label: 'Ringkasan Kelas', icon: <LayoutDashboard className="w-5 h-5" /> },
             { id: 'announcements', label: 'Pengumuman Digital', icon: <Bell className="w-5 h-5" />, count: announcements.length },
             { id: 'grades', label: 'Raport Online', icon: <FileText className="w-5 h-5" /> },
+            { id: 'subject_grades', label: 'Inbox Nilai Mapel', icon: <Inbox className="w-5 h-5" />, count: subjectGradesList.length },
             { id: 'attendance', label: 'Absensi Siswa', icon: <CheckSquare className="w-5 h-5" />, status: `${attendStats.percent}%` },
             { id: 'settings', label: 'Pengaturan Kelas', icon: <Settings className="w-5 h-5" /> },
           ].map(item => (
@@ -968,11 +1142,11 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                 {item.icon}
                 <span>{item.label}</span>
               </div>
-              {item.count && (
+              {item.count ? (
                 <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                   {item.count}
                 </span>
-              )}
+              ) : null}
               {item.status && (
                 <span className="bg-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.2 rounded">
                   {item.status}
@@ -1007,6 +1181,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                   {activeTab === 'overview' && 'Ringkasan Kemajuan Kelas'}
                   {activeTab === 'announcements' && 'Pengumuman Digital (Broadcast)'}
                   {activeTab === 'grades' && 'Pengelolaan Raport Online'}
+                  {activeTab === 'subject_grades' && 'Inbox Nilai Mata Pelajaran'}
                   {activeTab === 'attendance' && 'Lembar Presensi Harian'}
                   {activeTab === 'settings' && 'Pengaturan Kelas & Instansi'}
                 </>
@@ -1020,7 +1195,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
           {/* Role Switcher Toggle */}
           <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
             <button
-              onClick={() => setViewMode('teacher')}
+              onClick={handleSwitchToTeacherMode}
               className={`px-2.5 py-1 text-[11px] sm:text-xs font-bold rounded-md transition-all duration-150 cursor-pointer ${
                 viewMode === 'teacher'
                   ? 'bg-white text-[#00288e] shadow-sm'
@@ -1030,7 +1205,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
               Mode Guru
             </button>
             <button
-              onClick={() => setViewMode('student')}
+              onClick={handleSwitchToStudentMode}
               className={`px-2.5 py-1 text-[11px] sm:text-xs font-bold rounded-md transition-all duration-150 cursor-pointer ${
                 viewMode === 'student'
                   ? 'bg-white text-[#00288e] shadow-sm'
@@ -1198,142 +1373,147 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                       </div>
 
                       {/* PDF Report Center */}
-                      <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-4">
-                        <h4 className="text-xs font-extrabold text-[#00288e] uppercase tracking-wider flex items-center space-x-1.5 border-b border-gray-100 pb-2">
+                      <div className="space-y-4">
+                        <div className="flex items-center space-x-1.5 bg-blue-50/50 border border-blue-200/50 p-3 rounded-lg">
                           <FileDown className="w-4.5 h-4.5 text-[#00288e]" />
-                          <span>Pusat Unduh Dokumen</span>
-                        </h4>
+                          <span className="text-xs font-extrabold text-[#00288e] uppercase tracking-wider">Arsip Dokumen Raport Digital</span>
+                        </div>
 
-                        <div className="space-y-3 text-xs">
-                          {/* 1. Official PDF uploaded by Teacher (Pak Herman) */}
-                          <div className="space-y-2">
-                            <span className="text-[10px] font-extrabold text-slate-400 block uppercase">Raport PDF Resmi ({studentPDFs.length})</span>
-                            
-                            {studentPDFs.length === 0 ? (
-                              <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-lg text-center">
-                                <p className="text-[11px] text-gray-550 text-gray-500 font-medium leading-relaxed">
-                                  Belum ada scan dokumen resmi PDF yang diunggah oleh Wali Kelas untuk Anda.
+                        {/* Semester 1 Card Box */}
+                        <div className="bg-white border border-indigo-200 rounded-xl p-5 shadow-xs hover:shadow-sm transition duration-150 text-left relative overflow-hidden">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50/50 rounded-bl-full -z-0 pointer-events-none" />
+                          <div className="relative z-10 space-y-3">
+                            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                              <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-150 px-2.5 py-1 rounded-md">SEMESTER 1 (GANJIL)</span>
+                              <span className="text-[9px] font-mono text-gray-400">Ganjil</span>
+                            </div>
+
+                            {studentPDFs.filter(r => r.semester === 1).length === 0 ? (
+                              <div className="p-4 bg-slate-50/50 border border-dashed border-slate-200 rounded-lg text-center">
+                                <p className="text-[11px] text-gray-400 font-medium">
+                                  Belum ada scan dokumen resmi Semester 1 yang diunggah oleh Wali Kelas.
                                 </p>
                               </div>
                             ) : (
-                              <div className="space-y-4">
-                                {/* Semester 1 Section */}
-                                <div className="space-y-2">
-                                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-150 px-2 py-0.5 rounded-md block w-max">SEMESTER 1 (GANJIL)</span>
-                                  {studentPDFs.filter(r => r.semester === 1).length === 0 ? (
-                                    <p className="text-[10.5px] text-slate-400 italic pl-1 leading-normal">Belum ada berkas scan raport Semester 1 resmi yang diunggah.</p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {studentPDFs.filter(r => r.semester === 1).map((report) => (
-                                        <div key={report.id} className="p-3 bg-indigo-50/20 border border-indigo-150 rounded-lg hover:border-indigo-300 transition duration-150 flex flex-col space-y-2 text-left">
-                                          <div className="flex items-start space-x-2">
-                                            <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                                            </svg>
-                                            <div className="min-w-0 flex-1">
-                                              <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
-                                              <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
-                                            </div>
-                                          </div>
-                                          <div className="grid grid-cols-2 gap-2">
-                                            <button
-                                              onClick={() => setPreviewPdfReport({
-                                                id: report.id,
-                                                studentId: currentStudent.id,
-                                                studentName: currentStudent.name,
-                                                fileName: report.fileName,
-                                                fileData: report.fileData,
-                                                fileSize: report.fileSize,
-                                                uploadDate: report.uploadDate,
-                                                semester: 1
-                                              })}
-                                              className="py-1 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow-sm transition cursor-pointer"
-                                            >
-                                              <Eye className="w-3.5 h-3.5" />
-                                              <span>Pratinjau</span>
-                                            </button>
-                                            <button
-                                              onClick={() => handleDownloadFile(report.fileData, report.fileName)}
-                                              className="py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow transition cursor-pointer"
-                                            >
-                                              <Download className="w-3.5 h-3.5" />
-                                              <span>Unduh</span>
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ))}
+                              <div className="space-y-2">
+                                {studentPDFs.filter(r => r.semester === 1).map((report) => (
+                                  <div key={report.id} className="p-3 bg-indigo-50/20 border border-indigo-150 rounded-lg flex flex-col space-y-2 text-xs">
+                                    <div className="flex items-start space-x-2">
+                                      <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                                      </svg>
+                                      <div className="min-w-0 flex-1">
+                                        <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
+                                        <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
+                                      </div>
                                     </div>
-                                  )}
-                                </div>
-
-                                {/* Semester 2 Section */}
-                                <div className="space-y-2 pt-2 border-t border-slate-100">
-                                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-150 px-2 py-0.5 rounded-md block w-max">SEMESTER 2 (GENAP)</span>
-                                  {studentPDFs.filter(r => r.semester !== 1).length === 0 ? (
-                                    <p className="text-[10.5px] text-slate-400 italic pl-1 leading-normal">Belum ada berkas scan raport Semester 2 resmi yang diunggah.</p>
-                                  ) : (
-                                    <div className="space-y-2">
-                                      {studentPDFs.filter(r => r.semester !== 1).map((report) => (
-                                        <div key={report.id} className="p-3 bg-emerald-50/10 border border-emerald-150 rounded-lg hover:border-emerald-300 transition duration-150 flex flex-col space-y-2 text-left">
-                                          <div className="flex items-start space-x-2">
-                                            <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                                              <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
-                                            </svg>
-                                            <div className="min-w-0 flex-1">
-                                              <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
-                                              <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
-                                            </div>
-                                          </div>
-                                          <div className="grid grid-cols-2 gap-2">
-                                            <button
-                                              onClick={() => setPreviewPdfReport({
-                                                id: report.id,
-                                                studentId: currentStudent.id,
-                                                studentName: currentStudent.name,
-                                                fileName: report.fileName,
-                                                fileData: report.fileData,
-                                                fileSize: report.fileSize,
-                                                uploadDate: report.uploadDate,
-                                                semester: report.semester || 2
-                                              })}
-                                              className="py-1 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow-sm transition cursor-pointer"
-                                            >
-                                              <Eye className="w-3.5 h-3.5" />
-                                              <span>Pratinjau</span>
-                                            </button>
-                                            <button
-                                              onClick={() => handleDownloadFile(report.fileData, report.fileName)}
-                                              className="py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 shadow transition cursor-pointer"
-                                            >
-                                              <Download className="w-3.5 h-3.5" />
-                                              <span>Unduh</span>
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ))}
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                        onClick={() => setPreviewPdfReport({
+                                          id: report.id,
+                                          studentId: currentStudent.id,
+                                          studentName: currentStudent.name,
+                                          fileName: report.fileName,
+                                          fileData: report.fileData,
+                                          fileSize: report.fileSize,
+                                          uploadDate: report.uploadDate,
+                                          semester: 1
+                                        })}
+                                        className="py-1.5 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 transition cursor-pointer"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                        <span>Pratinjau</span>
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadFile(report.fileData, report.fileName)}
+                                        className="py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 transition cursor-pointer shadow-xs"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>Unduh S1</span>
+                                      </button>
                                     </div>
-                                  )}
-                                </div>
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
+                        </div>
 
-                          {/* 2. System Auto-Generated PDF */}
-                          <div className="pt-3.5 border-t border-gray-150 flex flex-col space-y-2 text-left">
-                            <span className="text-[10px] font-extrabold text-slate-400 block uppercase">Rekap Raport Digital</span>
-                            <p className="text-[10px] text-gray-500 leading-normal">
-                              Salinan rangkuman hasil belajar digital yang digenerate otomatis dari server WaliKu.
-                            </p>
-                            <button
-                              onClick={() => {
-                                downloadSingleStudentRaforPDF(currentStudent, studentGradeRecord, profile, sAvg);
-                              }}
-                              className="w-full py-1.5 bg-[#00288e] hover:bg-[#1e40af] text-white text-[10.5px] font-bold rounded flex items-center justify-center space-x-1.5 shadow transition cursor-pointer"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              <span>Unduh Raport Sistem</span>
-                            </button>
+                        {/* Semester 2 Card Box */}
+                        <div className="bg-white border border-emerald-200 rounded-xl p-5 shadow-xs hover:shadow-sm transition duration-150 text-left relative overflow-hidden">
+                          <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50/50 rounded-bl-full -z-0 pointer-events-none" />
+                          <div className="relative z-10 space-y-3">
+                            <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                              <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-150 px-2.5 py-1 rounded-md">SEMESTER 2 (GENAP)</span>
+                              <span className="text-[9px] font-mono text-gray-400">Genap</span>
+                            </div>
+
+                            {studentPDFs.filter(r => r.semester !== 1).length === 0 ? (
+                              <div className="p-4 bg-slate-50/50 border border-dashed border-slate-200 rounded-lg text-center">
+                                <p className="text-[11px] text-gray-400 font-medium">
+                                  Belum ada scan dokumen resmi Semester 2 yang diunggah oleh Wali Kelas.
+                                </p>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {studentPDFs.filter(r => r.semester !== 1).map((report) => (
+                                  <div key={report.id} className="p-3 bg-emerald-50/20 border border-emerald-150 rounded-lg flex flex-col space-y-2 text-xs">
+                                    <div className="flex items-start space-x-2">
+                                      <svg className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                                      </svg>
+                                      <div className="min-w-0 flex-1">
+                                        <span className="text-xs font-bold text-slate-800 block truncate" title={report.fileName}>{report.fileName}</span>
+                                        <span className="text-[9px] text-slate-400 font-medium block">Ukuran: {report.fileSize} • Terbit: {report.uploadDate}</span>
+                                      </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                        onClick={() => setPreviewPdfReport({
+                                          id: report.id,
+                                          studentId: currentStudent.id,
+                                          studentName: currentStudent.name,
+                                          fileName: report.fileName,
+                                          fileData: report.fileData,
+                                          fileSize: report.fileSize,
+                                          uploadDate: report.uploadDate,
+                                          semester: report.semester || 2
+                                        })}
+                                        className="py-1.5 bg-blue-50 hover:bg-blue-100 text-[#00288e] border border-blue-250 text-[10px] font-bold rounded flex items-center justify-center space-x-1 transition cursor-pointer"
+                                      >
+                                        <Eye className="w-3.5 h-3.5" />
+                                        <span>Pratinjau</span>
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadFile(report.fileData, report.fileName)}
+                                        className="py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded flex items-center justify-center space-x-1 transition cursor-pointer shadow-xs"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                        <span>Unduh S2</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
+                        </div>
+
+                        {/* System Generated Rekap Card */}
+                        <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-xs hover:shadow-sm transition duration-150 text-left space-y-3">
+                          <span className="text-[10px] font-extrabold text-slate-400 block uppercase">Rekap Raport Digital</span>
+                          <p className="text-[11.5px] text-gray-550 leading-normal">
+                            Salinan rangkuman hasil belajar digital yang digenerate otomatis dari server WaliKu.
+                          </p>
+                          <button
+                            onClick={() => {
+                              downloadSingleStudentRaforPDF(currentStudent, studentGradeRecord, profile, sAvg);
+                            }}
+                            className="w-full py-1.5 bg-[#00288e] hover:bg-[#1e40af] text-white text-[10.5px] font-bold rounded flex items-center justify-center space-x-1.5 shadow transition cursor-pointer"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Unduh Raport Sistem</span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -2269,38 +2449,88 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
                             {/* Direct PDF Upload Button */}
                             <td className="px-6 py-4 text-center">
-                              <div className="flex flex-col sm:flex-row items-center justify-center gap-1.5">
-                                <input
-                                  type="file"
-                                  id={`pdf-row-upload-${student.id}`}
-                                  className="hidden"
-                                  accept=".pdf"
-                                  onChange={(e) => handleFileUpload(e, student.id)}
-                                />
-                                <button
-                                  onClick={() => {
-                                    const input = document.getElementById(`pdf-row-upload-${student.id}`);
-                                    if (input) input.click();
-                                  }}
-                                  className="w-full sm:w-auto p-1.5 px-3 text-[11px] font-bold text-white bg-[#00288e] hover:bg-[#1e40af] rounded flex items-center justify-center space-x-1 cursor-pointer shadow-sm duration-150 shrink-0"
-                                >
-                                  <Upload className="w-3 h-3" />
-                                  <span>Unggah Lokal</span>
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    if (!driveToken) {
-                                      alert("Hubungkan akun Google Drive Anda terlebih dahulu melalui panel di atas.");
-                                      return;
-                                    }
-                                    setTargetStudentForDriveImport(student.id);
-                                    setIsDrivePickerOpen(true);
-                                  }}
-                                  className="w-full sm:w-auto p-1.5 px-3 text-[11px] font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 hover:text-blue-700 rounded flex items-center justify-center space-x-1 cursor-pointer shadow-xs duration-150 shrink-0"
-                                >
-                                  <Cloud className="w-3 h-3 text-blue-500" />
-                                  <span>Pilih dari Drive</span>
-                                </button>
+                              <div className="flex flex-col gap-2 min-w-[190px] justify-center items-center">
+                                {/* Semester 1 Upload Card */}
+                                <div className="w-full bg-indigo-50/25 border border-indigo-200/60 rounded p-1.5 flex flex-col gap-1 text-left shadow-2xs">
+                                  <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-100 border border-indigo-250 px-1.5 py-0.5 rounded leading-none w-max block uppercase">Semester 1</span>
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="file"
+                                      id={`pdf-row-upload-${student.id}-smt1`}
+                                      className="hidden"
+                                      accept=".pdf"
+                                      onChange={(e) => handleFileUpload(e, student.id, 1)}
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        const input = document.getElementById(`pdf-row-upload-${student.id}-smt1`);
+                                        if (input) input.click();
+                                      }}
+                                      className="flex-1 p-1 px-1.5 text-[10px] font-bold text-white bg-indigo-650 hover:bg-indigo-750 rounded flex items-center justify-center gap-0.5 cursor-pointer duration-150 shadow-xs"
+                                      title="Unggah berkas PDF untuk Semester 1 dari komputer"
+                                    >
+                                      <Upload className="w-2.5 h-2.5" />
+                                      <span>Unggah S1</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (!driveToken) {
+                                          alert("Hubungkan akun Google Drive Anda terlebih dahulu melalui panel di atas.");
+                                          return;
+                                        }
+                                        setTargetStudentForDriveImport(student.id);
+                                        setTargetSemesterForDriveImport(1);
+                                        setIsDrivePickerOpen(true);
+                                      }}
+                                      className="p-1 px-1.5 text-[10px] font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 shadow-3xs hover:text-indigo-600 rounded flex items-center justify-center gap-0.5 cursor-pointer duration-150"
+                                      title="Ambil berkas PDF Semester 1 dari Google Drive"
+                                    >
+                                      <Cloud className="w-2.5 h-2.5 text-blue-500" />
+                                      <span>Drive</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Semester 2 Upload Card */}
+                                <div className="w-full bg-emerald-50/25 border border-emerald-200/60 rounded p-1.5 flex flex-col gap-1 text-left shadow-2xs">
+                                  <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-100 border border-emerald-250 px-1.5 py-0.5 rounded leading-none w-max block uppercase">Semester 2</span>
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="file"
+                                      id={`pdf-row-upload-${student.id}-smt2`}
+                                      className="hidden"
+                                      accept=".pdf"
+                                      onChange={(e) => handleFileUpload(e, student.id, 2)}
+                                    />
+                                    <button
+                                      onClick={() => {
+                                        const input = document.getElementById(`pdf-row-upload-${student.id}-smt2`);
+                                        if (input) input.click();
+                                      }}
+                                      className="flex-1 p-1 px-1.5 text-[10px] font-bold text-white bg-emerald-650 hover:bg-emerald-750 rounded flex items-center justify-center gap-0.5 cursor-pointer duration-150 shadow-xs"
+                                      title="Unggah berkas PDF untuk Semester 2 dari komputer"
+                                    >
+                                      <Upload className="w-2.5 h-2.5" />
+                                      <span>Unggah S2</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (!driveToken) {
+                                          alert("Hubungkan akun Google Drive Anda terlebih dahulu melalui panel di atas.");
+                                          return;
+                                        }
+                                        setTargetStudentForDriveImport(student.id);
+                                        setTargetSemesterForDriveImport(2);
+                                        setIsDrivePickerOpen(true);
+                                      }}
+                                      className="p-1 px-1.5 text-[10px] font-bold text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 shadow-3xs hover:text-emerald-600 rounded flex items-center justify-center gap-0.5 cursor-pointer duration-150"
+                                      title="Ambil berkas PDF Semester 2 dari Google Drive"
+                                    >
+                                      <Cloud className="w-2.5 h-2.5 text-blue-500" />
+                                      <span>Drive</span>
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
                             </td>
 
@@ -2312,17 +2542,26 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                                   Belum Ada Raport PDF
                                 </span>
                               ) : (
-                                <div className="space-y-1">
+                                <div className="space-y-1.5">
                                   {studentPDFs.map(pdf => (
-                                    <div key={pdf.id} className="flex items-center space-x-1.5 text-xs text-slate-800 bg-emerald-50 border border-emerald-150 p-1.5 rounded">
-                                      <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                      <div className="truncate max-w-[150px] leading-tight flex-1 text-left">
-                                        <span className="block font-bold truncate text-slate-800" title={pdf.fileName}>
-                                          <span className="bg-indigo-600 text-white font-extrabold text-[8px] px-1 py-0.5 rounded mr-1 inline-block uppercase leading-none">SMT {pdf.semester || 2}</span>
-                                          {pdf.fileName}
-                                        </span>
-                                        <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">{pdf.fileSize} • {pdf.uploadDate}</span>
+                                    <div key={pdf.id} className="flex items-center justify-between p-2 bg-emerald-50 border border-emerald-150 rounded-lg group hover:bg-emerald-100/50 transition duration-150 gap-2">
+                                      <div className="flex items-center space-x-1.5 min-w-0 flex-1 flex-row text-left">
+                                        <FileText className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                                        <div className="truncate max-w-[150px] leading-tight flex-1 text-left">
+                                          <span className="block font-bold truncate text-slate-800 text-[11px]" title={pdf.fileName}>
+                                            <span className="bg-indigo-650 text-white font-extrabold text-[8px] px-1 py-0.5 rounded mr-1 inline-block uppercase leading-none">SMT {pdf.semester || 2}</span>
+                                            {pdf.fileName}
+                                          </span>
+                                          <span className="text-[9px] text-slate-400 font-semibold block mt-0.5">{pdf.fileSize} • {pdf.uploadDate}</span>
+                                        </div>
                                       </div>
+                                      <button
+                                        onClick={() => handleDeleteUploadedFile(pdf.id)}
+                                        className="p-1 text-slate-450 hover:text-rose-600 hover:bg-rose-50 rounded transition duration-150 shrink-0 cursor-pointer"
+                                        title="Hapus / Revisi Dokumen"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   ))}
                                 </div>
@@ -2571,6 +2810,208 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
             </div>
           )}
 
+          {/* VIEW: SUBJECT GRADES INBOX */}
+          {activeTab === 'subject_grades' && (
+            <div className="space-y-6 text-left">
+              
+              {/* Integration status banner */}
+              <div className="bg-white border border-gray-250 rounded-xl p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-6 shadow-sm">
+                <div className="space-y-1">
+                  <h4 className="text-sm font-extrabold text-gray-900 flex items-center space-x-2">
+                    <HardDrive className="w-5 h-5 text-indigo-600" />
+                    <span>Integrasi Google Drive Wali Kelas</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 leading-relaxed max-w-2xl">
+                    Penyimpanan cloud untuk semua setor draf nilai mata pelajaran kesiswaan. Hubungkan akun Google Sekolah Anda di panel Ringkasan untuk secara otomatis menyimpan berkas laporan guru ke Drive kesiswaan bersama.
+                  </p>
+                </div>
+                <div>
+                  {driveToken ? (
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                      <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-100 flex items-center justify-center space-x-1.5 shadow-sm">
+                        <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                        <span>Google Drive Connected</span>
+                      </span>
+                      <button
+                        onClick={handleBulkSyncSubjectGradesToDrive}
+                        disabled={isSyncingAllDrive || subjectGradesList.filter(item => !item.driveFileId).length === 0}
+                        className="py-1.5 px-4 bg-indigo-600 text-white rounded font-bold hover:bg-indigo-700 text-xs shadow-md transition disabled:bg-gray-200 disabled:text-gray-400 cursor-pointer flex items-center justify-center space-x-1"
+                      >
+                        {isSyncingAllDrive ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Mencadangkan...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Cloud className="w-3.5 h-3.5" />
+                            <span>Cadangkan Semua Baru</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded p-3 text-xs flex items-center space-x-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Sistem tersimpan lokal aman. Sambungkan Google Drive di tab utama untuk backup cloud otomatis.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Main table container */}
+              <div className="bg-white border border-gray-250 rounded-xl shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-gray-200 bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-extrabold text-gray-900">Berkas Nilai Masuk</h3>
+                    <p className="text-[11px] text-gray-400 font-medium">Menampilkan laporan nilai kesiswaan di kelas {profile.className} yang dikirim oleh Guru Mapel tanpa login</p>
+                  </div>
+                  
+                  {/* Search filter states directly */}
+                  <div className="flex items-center space-x-2 bg-white px-3 py-1.5 border border-gray-350 rounded-[4px] shadow-sm max-w-xs w-full">
+                    <Search className="w-4 h-4 text-gray-400 shrink-0" />
+                    <input
+                      type="text"
+                      placeholder="Cari mapel atau guru..."
+                      onChange={(e) => {
+                        // We will filter lists inline natively!
+                        (window as any)._subject_search = e.target.value.toLowerCase();
+                        setActiveTab('subject_grades'); // Triggers rerender
+                      }}
+                      className="block w-full border-none bg-transparent p-0 text-xs focus:outline-none focus:ring-0 placeholder-gray-400 font-medium text-gray-800"
+                    />
+                  </div>
+                </div>
+
+                {/* Listing of files table */}
+                <div className="overflow-x-auto">
+                  {(() => {
+                    const search = (window as any)._subject_search || '';
+                    const filtered = subjectGradesList.filter(item => 
+                      item.subject.toLowerCase().includes(search) || 
+                      item.teacherName.toLowerCase().includes(search) ||
+                      item.fileName.toLowerCase().includes(search)
+                    );
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="py-20 text-center space-y-3.5 max-w-sm mx-auto">
+                          <div className="w-12 h-12 bg-gray-100 text-gray-400 border border-gray-200 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                            <Inbox className="w-6 h-6" />
+                          </div>
+                          <div className="space-y-1 text-center">
+                            <h4 className="text-xs font-bold text-gray-700">Inbox Nilai Masih Kosong</h4>
+                            <p className="text-[11px] text-gray-400 leading-normal">
+                              Belum ada guru mata pelajaran yang mengirimkan berkas nilai untuk kelas Anda lewat landing page depan saat ini.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-[#00288e]/5">
+                          <tr>
+                            <th scope="col" className="px-6 py-3.5 text-left text-[10px] font-black uppercase text-gray-500 tracking-wider">Mata Pelajaran</th>
+                            <th scope="col" className="px-6 py-3.5 text-left text-[10px] font-black uppercase text-gray-500 tracking-wider">Guru Pengampu</th>
+                            <th scope="col" className="px-6 py-3.5 text-left text-[10px] font-black uppercase text-gray-500 tracking-wider">Tanggal Dikirim</th>
+                            <th scope="col" className="px-6 py-3.5 text-left text-[10px] font-black uppercase text-gray-500 tracking-wider">Nama File & Ukuran</th>
+                            <th scope="col" className="px-6 py-3.5 text-left text-[10px] font-black uppercase text-gray-500 tracking-wider">Status Backup</th>
+                            <th scope="col" className="relative px-6 py-3.5 text-right text-[10px] font-black uppercase text-gray-500 tracking-wider">Aksi</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-150">
+                          {filtered.map(item => {
+                            const isSyncing = syncingItemId === item.id;
+                            const isExcel = item.fileName.toLowerCase().endsWith('.xls') || item.fileName.toLowerCase().endsWith('.xlsx');
+                            
+                            return (
+                              <tr key={item.id} className="hover:bg-slate-50/50 transition">
+                                <td className="px-6 py-4 whitespace-nowrap text-left">
+                                  <span className="text-xs font-extrabold text-[#00288e] bg-blue-50 px-2 py-1 rounded border border-blue-100">{item.subject}</span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-left">
+                                  <div className="flex items-center space-x-2">
+                                    <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-extrabold text-[10px] border border-slate-250">{item.teacherName.charAt(0)}</div>
+                                    <span className="text-xs font-bold text-gray-800">{item.teacherName}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-left">
+                                  <span className="text-xs text-gray-500 font-medium">{item.uploadDate}</span>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-left">
+                                  <div className="flex flex-col leading-tight">
+                                    <span className="text-xs font-bold text-gray-800 truncate max-w-xs">{item.fileName}</span>
+                                    <span className="text-[10px] text-gray-400 font-medium uppercase font-mono">{item.fileSize} • {isExcel ? 'Excel Spreadsheet' : 'Dokumen PDF/Word'}</span>
+                                  </div>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-left">
+                                  {item.driveFileId ? (
+                                    <a
+                                      href={item.driveFileLink}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex items-center space-x-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.8 rounded border border-emerald-100 hover:bg-emerald-100 hover:underline transition duration-150 cursor-pointer"
+                                    >
+                                      <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                                      <span>Tercadangkan ✓</span>
+                                    </a>
+                                  ) : (
+                                    <span className="inline-flex items-center space-x-1 bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.8 rounded border border-slate-205">
+                                      <span>Lokal Aman</span>
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-right text-xs font-medium space-x-1">
+                                  {/* Download button */}
+                                  <button
+                                    onClick={() => handleDownloadSubjectGrade(item)}
+                                    className="p-1.5 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded transition cursor-pointer inline-flex items-center"
+                                    title="Unduh File ke Perangkat"
+                                  >
+                                    <Download className="w-4 h-4" />
+                                  </button>
+
+                                  {/* Sync to drive button */}
+                                  {driveToken && !item.driveFileId && (
+                                    <button
+                                      onClick={() => handleSyncSubjectGradeToDrive(item.id)}
+                                      disabled={isSyncing}
+                                      className="p-1.5 text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 border border-transparent rounded hover:border-indigo-100 transition cursor-pointer inline-flex items-center"
+                                      title="Cadangkan ke Google Drive"
+                                    >
+                                      {isSyncing ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-500" />
+                                      ) : (
+                                        <Cloud className="w-4 h-4" />
+                                      )}
+                                    </button>
+                                  )}
+
+                                  {/* Delete button */}
+                                  <button
+                                    onClick={() => handleDeleteSubjectGrade(item.id)}
+                                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition cursor-pointer inline-flex items-center"
+                                    title="Hapus berkas ini"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    );
+                  })()}
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
           {/* VIEW 5: SETTINGS / PENGATURAN */}
           {activeTab === 'settings' && (
             <div className="bg-white border border-gray-250 p-8 rounded-lg shadow-sm text-left max-w-3xl space-y-6">
@@ -2631,6 +3072,44 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                       value={profile.academicYear}
                       onChange={(e) => setProfile({ ...profile, academicYear: e.target.value })}
                     />
+                  </div>
+                </div>
+
+                {/* Keamanan & Proteksi Akses Guru */}
+                <div className="pt-4 border-t border-gray-150 text-left">
+                  <h5 className="text-xs font-extrabold text-slate-400 block uppercase tracking-wider mb-2">Keamanan & Proteksi Akses Guru</h5>
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-4">
+                    <div className="flex items-start space-x-3">
+                      <div className="flex items-center h-5">
+                        <input
+                          id="isPinLocked"
+                          type="checkbox"
+                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                          checked={profile.isPinLocked !== false}
+                          onChange={(e) => setProfile({ ...profile, isPinLocked: e.target.checked })}
+                        />
+                      </div>
+                      <div className="text-sm text-left">
+                        <label htmlFor="isPinLocked" className="font-bold text-gray-800 cursor-pointer select-none block">Kunci Akses kembali ke Mode Guru</label>
+                        <p className="text-gray-500 text-[11px] leading-tight">Mencegah siswa atau orang tua beralih kembali dari Portal Siswa ke halaman pengelolaan data dan nilai guru.</p>
+                      </div>
+                    </div>
+
+                    {(profile.isPinLocked !== false) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200/60">
+                        <div className="space-y-1.5 text-left">
+                          <label className="text-[11px] font-bold text-gray-700 uppercase block">PIN / Sandi Pengaman (Mode Guru)</label>
+                          <input
+                            type="text"
+                            maxLength={10}
+                            className="block w-full text-xs font-mono border-gray-300 rounded border p-2 bg-white max-w-[200px]"
+                            value={profile.teacherPin || '1234'}
+                            onChange={(e) => setProfile({ ...profile, teacherPin: e.target.value })}
+                          />
+                          <p className="text-[10px] text-gray-400">PIN bawaan awal adalah <strong className="font-mono text-gray-600">1234</strong>. Anda bisa mengubahnya sesuka hati.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2718,6 +3197,88 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- PIN VERIFICATION MODAL FOR MODE GURU --- */}
+      <AnimatePresence>
+        {isPinModalOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
+            <motion.div
+              className="bg-white rounded-xl shadow-2xl max-w-sm w-full overflow-hidden text-left relative border border-gray-200"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+            >
+              <div className="absolute top-0 left-0 right-0 h-1 bg-[#00288e]" />
+              
+              <div className="p-6 text-center space-y-4">
+                <div className="mx-auto w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center text-blue-600">
+                  <ShieldCheck className="w-6 h-6 text-[#00288e]" />
+                </div>
+                
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 leading-tight">
+                    Verifikasi Akses Guru
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1 leading-normal">
+                    Halaman ini dilindungi untuk mengamankan data nilai dan pengelolaan kesiswaan. Silakan masukkan PIN pengaman Anda.
+                  </p>
+                </div>
+
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  const correctPin = profile.teacherPin || '1234';
+                  if (pinInput === correctPin) {
+                    setViewMode('teacher');
+                    localStorage.setItem('waliku_role', 'teacher');
+                    setIsPinModalOpen(false);
+                    setPinInput('');
+                    setPinError('');
+                  } else {
+                    setPinError('PIN / Sandi Keamanan salah!');
+                  }
+                }} className="space-y-4">
+                  <div>
+                    <input
+                      type="password"
+                      placeholder="Masukkan PIN / Sandi"
+                      className="block w-full text-center text-lg font-mono font-bold tracking-widest border-gray-300 rounded-lg border p-3 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-800"
+                      value={pinInput}
+                      onChange={(e) => {
+                        setPinInput(e.target.value);
+                        if (pinError) setPinError('');
+                      }}
+                      autoFocus
+                    />
+                    {pinError && (
+                      <p className="text-rose-600 text-xs font-semibold mt-2">{pinError}</p>
+                    )}
+                  </div>
+
+                  <div className="flex space-x-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsPinModalOpen(false);
+                        setPinInput('');
+                        setPinError('');
+                      }}
+                      className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-lg transition cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="submit"
+                      className="flex-1 py-2 bg-[#00288e] hover:bg-[#1e40af] text-white text-xs font-bold rounded-lg shadow transition cursor-pointer"
+                    >
+                      Konfirmasi
+                    </button>
+                  </div>
+                </form>
+              </div>
             </motion.div>
           </div>
         )}

@@ -186,5 +186,7 @@ export const DEFAULT_PROFILE: UserProfile = {
   className: 'XI MIPA 2',
   academicYear: '2025/2026',
   avatar: '', // We will bind the generated asset dynamically in App
-  email: 'herman@sekolah.sch.id'
+  email: 'herman@sekolah.sch.id',
+  teacherPin: '1234',
+  isPinLocked: true
 };
