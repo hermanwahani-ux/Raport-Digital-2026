@@ -37,6 +37,7 @@ import {
   uploadFileToDrive,
   createDriveFolder
 } from '../utils/googleDrive';
+import { savePDFToIndexedDB, getPDFFromIndexedDB, deletePDFFromIndexedDB } from '../utils/indexedDB';
 import { User as FirebaseUser } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType, ensureSignedInUser } from '../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
@@ -83,8 +84,13 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
     }, (error) => {
       try {
         handleFirestoreError(error, OperationType.LIST, path);
-      } catch (wrappedError) {
-        console.error("Gagal memuat Nilai Mapel Masuk:", error);
+      } catch (wrappedError: any) {
+        const errMsg = wrappedError?.message || String(wrappedError);
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
+          console.warn("Firestore subscription quota limits reached. Operating in offline/local recipient mode gracefully.");
+        } else {
+          console.error("Gagal memuat Nilai Mapel Masuk:", error);
+        }
       }
     });
     return () => unsubscribe();
@@ -166,8 +172,44 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   });
 
   useEffect(() => {
-    localStorage.setItem('waliku_uploaded_reports', JSON.stringify(uploadedReports));
+    // 1. Save metadata (without heavy fileData payload) to localStorage to avoid QuotaExceededError
+    const sanitizedReports = uploadedReports.map(({ fileData, ...rest }) => rest);
+    try {
+      localStorage.setItem('waliku_uploaded_reports', JSON.stringify(sanitizedReports));
+    } catch (err) {
+      console.error("Gagal menyimpan metadata raport ke localStorage:", err);
+    }
+
+    // 2. Proactively save any new/loaded fileData to IndexedDB so they persist offline correctly
+    uploadedReports.forEach(report => {
+      if (report.fileData) {
+        savePDFToIndexedDB(report.id, report.fileData);
+      }
+    });
   }, [uploadedReports]);
+
+  // Load heavy PDF file data from IndexedDB on startup to populate state transparently
+  useEffect(() => {
+    const loadFilesFromIndexedDB = async () => {
+      let updated = false;
+      const loadedReports = await Promise.all(
+        uploadedReports.map(async (r) => {
+          if (!r.fileData) {
+            const data = await getPDFFromIndexedDB(r.id);
+            if (data) {
+              updated = true;
+              return { ...r, fileData: data };
+            }
+          }
+          return r;
+        })
+      );
+      if (updated) {
+        setUploadedReports(loadedReports);
+      }
+    };
+    loadFilesFromIndexedDB();
+  }, []);
 
   // --- Google Drive Integration States ---
   const [driveUser, setDriveUser] = useState<FirebaseUser | null>(null);
@@ -384,7 +426,12 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
 
         setCloudSyncStatus('synced');
       } catch (err: any) {
-        console.error('Firebase DB sync init failed:', err);
+        const errMsg = err?.message || String(err);
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
+          console.warn('Firebase DB sync was suspended due to Spark plan limits. Operating safely in local recipient storage mode.', err);
+        } else {
+          console.error('Firebase DB sync init failed:', err);
+        }
         setCloudSyncStatus('error');
         setCloudErrorMessage(err instanceof Error ? err.message : String(err));
       }
@@ -510,6 +557,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar }: Dashbo
   const handleDeleteUploadedFile = (id: string) => {
     if (window.confirm('Apakah Anda yakin ingin menghapus file raport PDF ini dari pangkalan data?')) {
       setUploadedReports(prev => prev.filter(r => r.id !== id));
+      deletePDFFromIndexedDB(id);
       deleteDoc(doc(db, 'uploadedReports', id)).catch(err => handleFirestoreError(err, OperationType.DELETE, `uploadedReports/${id}`));
     }
   };

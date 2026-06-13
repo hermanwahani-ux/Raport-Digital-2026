@@ -105,8 +105,13 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
 
         setStudents(merged);
         localStorage.setItem('waliku_students', JSON.stringify(merged));
-      } catch (err) {
-        console.error("Gagal memuat siswa dari Cloud Firestore:", err);
+      } catch (err: any) {
+        const errMsg = err?.message || String(err);
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
+          console.warn("Firestore Quota Exceeded during login student fetch fallback. Using local cached students.");
+        } else {
+          console.error("Gagal memuat siswa dari Cloud Firestore:", err);
+        }
       }
     }
     fetchStudents();
