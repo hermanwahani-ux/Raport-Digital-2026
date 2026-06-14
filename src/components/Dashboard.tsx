@@ -66,6 +66,11 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
           const base64String = event.target.result as string;
           if (onAvatarUpload) {
             onAvatarUpload(base64String);
+            setProfile(prev => {
+              const updated = { ...prev, avatar: base64String };
+              localStorage.setItem('waliku_profile', JSON.stringify(updated));
+              return updated;
+            });
             alert('Foto profil wali kelas berhasil disimpan secara otomatis!');
           }
         }

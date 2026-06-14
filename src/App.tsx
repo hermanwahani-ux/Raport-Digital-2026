@@ -26,9 +26,78 @@ export default function App() {
     return localStorage.getItem('waliku_teacher_avatar') || teacherAvatar;
   });
 
-  const handleAvatarUpload = (newBase64: string) => {
+  // Attempt to sync the teacher avatar and school settings from Firestore on boot
+  useEffect(() => {
+    const fetchCloudProfile = async () => {
+      try {
+        const { db } = await import('./lib/firebase');
+        const { doc, getDoc } = await import('firebase/firestore');
+        const profileRef = doc(db, 'profiles', 'active_teacher');
+        const profileSnap = await getDoc(profileRef);
+        if (profileSnap.exists()) {
+          const cloudData = profileSnap.data();
+          if (cloudData && cloudData.avatar) {
+            setTeacherAvatarState(cloudData.avatar);
+            localStorage.setItem('waliku_teacher_avatar', cloudData.avatar);
+            
+            // Sync with local student portal profile cache
+            const savedProfileStr = localStorage.getItem('waliku_profile');
+            if (savedProfileStr) {
+              const savedProfile = JSON.parse(savedProfileStr);
+              savedProfile.avatar = cloudData.avatar;
+              localStorage.setItem('waliku_profile', JSON.stringify(savedProfile));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch cloud profile during startup:", err);
+      }
+    };
+    fetchCloudProfile();
+  }, []);
+
+  const handleAvatarUpload = async (newBase64: string) => {
     setTeacherAvatarState(newBase64);
     localStorage.setItem('waliku_teacher_avatar', newBase64);
+
+    // Sync to profile in LocalStorage if it exists
+    const savedProfileStr = localStorage.getItem('waliku_profile');
+    let currentProfileObj = null;
+    if (savedProfileStr) {
+      try {
+        currentProfileObj = JSON.parse(savedProfileStr);
+        currentProfileObj.avatar = newBase64;
+        localStorage.setItem('waliku_profile', JSON.stringify(currentProfileObj));
+      } catch (e) {
+        console.error("Failed to parse cached profile:", e);
+      }
+    }
+
+    // Push base64 string to Firestore directly
+    try {
+      const { db } = await import('./lib/firebase');
+      const { doc, getDoc, setDoc } = await import('firebase/firestore');
+      const profileRef = doc(db, 'profiles', 'active_teacher');
+      
+      const profileSnap = await getDoc(profileRef);
+      let docData: any = {};
+      if (profileSnap.exists()) {
+        docData = profileSnap.data();
+      }
+      docData.avatar = newBase64;
+      
+      // Seed default properties if they are missing
+      if (!docData.name) docData.name = currentProfileObj?.name || 'Herman Wahani';
+      if (!docData.role) docData.role = currentProfileObj?.role || 'Guru Wali Kelas XI MIPA 2';
+      if (!docData.school) docData.school = currentProfileObj?.school || 'SMA Negeri 1 Jakarta';
+      if (!docData.className) docData.className = currentProfileObj?.className || 'XI MIPA 2';
+      if (!docData.academicYear) docData.academicYear = currentProfileObj?.academicYear || '2025/2026';
+      if (!docData.email) docData.email = currentProfileObj?.email || userEmail || 'herman@sekolah.sch.id';
+      
+      await setDoc(profileRef, docData);
+    } catch (err) {
+      console.warn("Failed to automatically synchronize uploaded avatar with Cloud Profile:", err);
+    }
   };
 
   const handleLoginSuccess = (email: string, role: string = 'teacher', studentId?: string) => {
