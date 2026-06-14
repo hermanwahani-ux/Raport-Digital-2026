@@ -41,6 +41,7 @@ import { savePDFToIndexedDB, getPDFFromIndexedDB, deletePDFFromIndexedDB } from 
 import { User as FirebaseUser } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType, ensureSignedInUser } from '../lib/firebase';
 import { doc, getDoc, getDocs, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
+import MobileHelpModal from './MobileHelpModal';
 
 interface DashboardProps {
   userEmail: string;
@@ -75,6 +76,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
 
   // --- Active Tab State ---
   const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings' | 'subject_grades'>('overview');
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // --- Cloud Firebase Sync States ---
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'local'>('syncing');
@@ -305,164 +307,225 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
     return () => unsubscribe();
   }, []);
 
-  // Authenticate & Load/Seed Firebase Firestore
-  useEffect(() => {
-    async function loadFirebaseData() {
+  // Synchronize local data and Firestore bilaterally
+  const triggerBilateralSync = async (isManual: boolean = false) => {
+    try {
+      setCloudSyncStatus('syncing');
+
+      // Ensure we are authenticated (Anonymous fallback or Google restore)
       try {
-        setCloudSyncStatus('syncing');
+        await ensureSignedInUser();
+      } catch (authError) {
+        console.warn("Could not establish Firebase session:", authError);
+      }
 
-        // Wait for a secure signed in session (Anonymous fallback or Google restore)
-        try {
-          await ensureSignedInUser();
-        } catch (authError) {
-          console.warn("Could not establish Firebase session:", authError);
+      // Check if previous sync flag exists. If not, this is a fresh device (e.g. phone)
+      const hasSyncedBefore = localStorage.getItem('waliku_has_synced') === 'true';
+
+      // 1. SYNC PROFILE
+      const profileRef = doc(db, 'profiles', 'active_teacher');
+      const profileSnap = await getDoc(profileRef).catch(err => {
+        handleFirestoreError(err, OperationType.GET, 'profiles/active_teacher');
+        throw err;
+      });
+      let currentCloudProfile: UserProfile | null = null;
+      if (profileSnap.exists()) {
+        currentCloudProfile = profileSnap.data() as UserProfile;
+      }
+
+      if (currentCloudProfile) {
+        // If the device has never synced before, or if we are a student view, pull from cloud
+        if (!hasSyncedBefore || viewMode === 'student') {
+          setProfile(currentCloudProfile);
+        } else {
+          // Otherwise, if we are a teacher and have custom local edits, push current profile to cloud
+          await setDoc(profileRef, profile).catch(err => handleFirestoreError(err, OperationType.WRITE, 'profiles/active_teacher'));
         }
+      } else {
+        // Cloud is empty, seed with local profile
+        await setDoc(profileRef, profile).catch(err => handleFirestoreError(err, OperationType.WRITE, 'profiles/active_teacher'));
+      }
 
-        // 1. Sync Profile
-        const profileRef = doc(db, 'profiles', 'active_teacher');
-        const profileSnap = await getDoc(profileRef).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'profiles/active_teacher');
+      // Safe get collection helper
+      const getCollectionDocs = async (collectionName: string) => {
+        const snap = await getDocs(collection(db, collectionName)).catch(err => {
+          handleFirestoreError(err, OperationType.GET, collectionName);
           throw err;
         });
-        if (profileSnap.exists()) {
-          setProfile(profileSnap.data() as UserProfile);
-        } else {
-          await setDoc(profileRef, profile).catch(err => {
-            handleFirestoreError(err, OperationType.WRITE, 'profiles/active_teacher');
-            throw err;
-          });
-        }
+        return snap;
+      };
 
-        // 2. Sync Students
-        const studentsSnap = await getDocs(collection(db, 'students')).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'students');
-          throw err;
+      // 2. SYNC STUDENTS
+      const studentsSnap = await getCollectionDocs('students');
+      const cloudStudents: Student[] = [];
+      studentsSnap.forEach(docSnap => cloudStudents.push(docSnap.data() as Student));
+
+      if (!hasSyncedBefore && cloudStudents.length > 0) {
+        setStudents(cloudStudents);
+      } else {
+        const mergedStudentsMap = new Map<string, Student>();
+        // Initialize with cloud records
+        cloudStudents.forEach(s => mergedStudentsMap.set(s.id, s));
+        // Overwrite or add with local edits (saves write quota by checking differences)
+        for (const s of students) {
+          const cloudVer = mergedStudentsMap.get(s.id);
+          if (!cloudVer || JSON.stringify(cloudVer) !== JSON.stringify(s)) {
+            mergedStudentsMap.set(s.id, s);
+            await setDoc(doc(db, 'students', s.id), s).catch(err => handleFirestoreError(err, OperationType.WRITE, `students/${s.id}`));
+          }
+        }
+        setStudents(Array.from(mergedStudentsMap.values()));
+      }
+
+      // 3. SYNC ANNOUNCEMENTS
+      const announcementsSnap = await getCollectionDocs('announcements');
+      const cloudAnnouncements: Announcement[] = [];
+      announcementsSnap.forEach(docSnap => cloudAnnouncements.push(docSnap.data() as Announcement));
+
+      if (!hasSyncedBefore && cloudAnnouncements.length > 0) {
+        setAnnouncements(cloudAnnouncements);
+      } else {
+        const mergedAnnouncementsMap = new Map<string, Announcement>();
+        cloudAnnouncements.forEach(a => mergedAnnouncementsMap.set(a.id, a));
+        for (const a of announcements) {
+          const cloudVer = mergedAnnouncementsMap.get(a.id);
+          if (!cloudVer || JSON.stringify(cloudVer) !== JSON.stringify(a)) {
+            mergedAnnouncementsMap.set(a.id, a);
+            await setDoc(doc(db, 'announcements', a.id), a).catch(err => handleFirestoreError(err, OperationType.WRITE, `announcements/${a.id}`));
+          }
+        }
+        setAnnouncements(Array.from(mergedAnnouncementsMap.values()));
+      }
+
+      // 4. SYNC GRADES
+      const gradesSnap = await getCollectionDocs('grades');
+      const cloudGrades: StudentGrade[] = [];
+      gradesSnap.forEach(docSnap => cloudGrades.push(docSnap.data() as StudentGrade));
+
+      if (!hasSyncedBefore && cloudGrades.length > 0) {
+        const repairedGrades: StudentGrade[] = cloudGrades.map(data => {
+          const rawGrades = (data.grades || {}) as any;
+          const muatanUmum = rawGrades.muatanUmum ?? rawGrades.matematika ?? 80;
+          const muatanKejuruan = rawGrades.muatanKejuruan ?? rawGrades.ipa ?? 80;
+          const mataPelajaranPilihan = rawGrades.mataPelajaranPilihan ?? rawGrades.ips ?? 80;
+          const kokurikuler = rawGrades.kokurikuler ?? rawGrades.bahasaIndonesia ?? rawGrades.bahasaInggris ?? 80;
+          return {
+            studentId: data.studentId,
+            grades: {
+              muatanUmum: Number(muatanUmum) || 0,
+              muatanKejuruan: Number(muatanKejuruan) || 0,
+              mataPelajaranPilihan: Number(mataPelajaranPilihan) || 0,
+              kokurikuler: Number(kokurikuler) || 0
+            }
+          };
         });
-        if (studentsSnap.size > 0) {
-          const studentsList: Student[] = [];
-          studentsSnap.forEach(sDoc => studentsList.push(sDoc.data() as Student));
-          setStudents(studentsList);
-        } else {
-          for (const s of students) {
-            await setDoc(doc(db, 'students', s.id), s).catch(err => {
-              handleFirestoreError(err, OperationType.WRITE, `students/${s.id}`);
-              throw err;
-            });
+        setGrades(repairedGrades);
+        const averagesRec = repairedGrades.find(g => g.studentId === 'class_averages');
+        if (averagesRec) {
+          setManualSubjectAverages(averagesRec.grades);
+          setIsManualOverride(true);
+        }
+      } else {
+        const mergedGradesMap = new Map<string, StudentGrade>();
+        cloudGrades.forEach(g => mergedGradesMap.set(g.studentId, g));
+        for (const g of grades) {
+          const cloudVer = mergedGradesMap.get(g.studentId);
+          if (!cloudVer || JSON.stringify(cloudVer.grades) !== JSON.stringify(g.grades)) {
+            mergedGradesMap.set(g.studentId, g);
+            await setDoc(doc(db, 'grades', g.studentId), g).catch(err => handleFirestoreError(err, OperationType.WRITE, `grades/${g.studentId}`));
+          }
+        }
+        setGrades(Array.from(mergedGradesMap.values()));
+      }
+
+      // 5. SYNC ATTENDANCE
+      const attendanceSnap = await getCollectionDocs('attendance');
+      const cloudAttendance: AttendanceDay[] = [];
+      attendanceSnap.forEach(docSnap => cloudAttendance.push(docSnap.data() as AttendanceDay));
+
+      if (!hasSyncedBefore && cloudAttendance.length > 0) {
+        setAttendance(cloudAttendance);
+      } else {
+        const mergedAttendanceMap = new Map<string, AttendanceDay>();
+        cloudAttendance.forEach(att => mergedAttendanceMap.set(att.date, att));
+        for (const att of attendance) {
+          const cloudVer = mergedAttendanceMap.get(att.date);
+          if (!cloudVer || JSON.stringify(cloudVer.records) !== JSON.stringify(att.records)) {
+            mergedAttendanceMap.set(att.date, att);
+            await setDoc(doc(db, 'attendance', att.date), att).catch(err => handleFirestoreError(err, OperationType.WRITE, `attendance/${att.date}`));
+          }
+        }
+        setAttendance(Array.from(mergedAttendanceMap.values()));
+      }
+
+      // 6. SYNC UPLOADED PDF REPORTS
+      const reportsSnap = await getCollectionDocs('uploadedReports');
+      const cloudReports: any[] = [];
+      reportsSnap.forEach(docSnap => cloudReports.push(docSnap.data()));
+
+      if (!hasSyncedBefore && cloudReports.length > 0) {
+        setUploadedReports(cloudReports);
+        for (const report of cloudReports) {
+          if (report.fileData) {
+            await savePDFToIndexedDB(report.id, report.fileData);
+          }
+        }
+      } else {
+        const mergedReportsMap = new Map<string, any>();
+        cloudReports.forEach(r => mergedReportsMap.set(r.id, r));
+
+        for (const r of uploadedReports) {
+          let localReportWithPdf = r;
+          if (!r.fileData) {
+            const cachedPdfData = await getPDFFromIndexedDB(r.id);
+            if (cachedPdfData) {
+              localReportWithPdf = { ...r, fileData: cachedPdfData };
+            }
+          }
+
+          const cloudVer = mergedReportsMap.get(r.id);
+          if (!cloudVer || (localReportWithPdf.fileData && !cloudVer.fileData)) {
+            mergedReportsMap.set(r.id, localReportWithPdf);
+            await setDoc(doc(db, 'uploadedReports', r.id), localReportWithPdf).catch(err => handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${r.id}`));
           }
         }
 
-        // 3. Sync Announcements
-        const announcementsSnap = await getDocs(collection(db, 'announcements')).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'announcements');
-          throw err;
-        });
-        if (announcementsSnap.size > 0) {
-          const announcementsList: Announcement[] = [];
-          announcementsSnap.forEach(aDoc => announcementsList.push(aDoc.data() as Announcement));
-          setAnnouncements(announcementsList);
-        } else {
-          for (const a of announcements) {
-            await setDoc(doc(db, 'announcements', a.id), a).catch(err => {
-              handleFirestoreError(err, OperationType.WRITE, `announcements/${a.id}`);
-              throw err;
-            });
+        const finalReports = Array.from(mergedReportsMap.values());
+        setUploadedReports(finalReports);
+
+        for (const r of finalReports) {
+          if (r.fileData) {
+            await savePDFToIndexedDB(r.id, r.fileData);
           }
         }
+      }
 
-        // 4. Sync Grades
-        const gradesSnap = await getDocs(collection(db, 'grades')).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'grades');
-          throw err;
-        });
-        if (gradesSnap.size > 0) {
-          const gradesList: StudentGrade[] = [];
-          gradesSnap.forEach(gDoc => {
-            const data = gDoc.data() as StudentGrade;
-            const rawGrades = (data.grades || {}) as any;
-            // Backwards compatibility/repair: if data has legacy structure, map legacy properties to new ones
-            const muatanUmum = rawGrades.muatanUmum ?? rawGrades.matematika ?? 80;
-            const muatanKejuruan = rawGrades.muatanKejuruan ?? rawGrades.ipa ?? 80;
-            const mataPelajaranPilihan = rawGrades.mataPelajaranPilihan ?? rawGrades.ips ?? 80;
-            const kokurikuler = rawGrades.kokurikuler ?? rawGrades.bahasaIndonesia ?? rawGrades.bahasaInggris ?? 80;
-            
-            gradesList.push({
-              studentId: data.studentId,
-              grades: {
-                muatanUmum: Number(muatanUmum) || 0,
-                muatanKejuruan: Number(muatanKejuruan) || 0,
-                mataPelajaranPilihan: Number(mataPelajaranPilihan) || 0,
-                kokurikuler: Number(kokurikuler) || 0
-              }
-            });
-          });
-          setGrades(gradesList);
+      localStorage.setItem('waliku_has_synced', 'true');
+      setCloudSyncStatus('synced');
+      setCloudErrorMessage(null);
 
-          // If there is an override for class averages in cloud, let's load it
-          const averagesRec = gradesList.find(g => g.studentId === 'class_averages');
-          if (averagesRec) {
-            setManualSubjectAverages(averagesRec.grades);
-            setIsManualOverride(true);
-          }
-        } else {
-          for (const g of grades) {
-            await setDoc(doc(db, 'grades', g.studentId), g).catch(err => {
-              handleFirestoreError(err, OperationType.WRITE, `grades/${g.studentId}`);
-              throw err;
-            });
-          }
-        }
-
-        // 5. Sync Attendance
-        const attendanceSnap = await getDocs(collection(db, 'attendance')).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'attendance');
-          throw err;
-        });
-        if (attendanceSnap.size > 0) {
-          const attendanceList: AttendanceDay[] = [];
-          attendanceSnap.forEach(attDoc => attendanceList.push(attDoc.data() as AttendanceDay));
-          setAttendance(attendanceList);
-        } else {
-          for (const att of attendance) {
-            await setDoc(doc(db, 'attendance', att.date), att).catch(err => {
-              handleFirestoreError(err, OperationType.WRITE, `attendance/${att.date}`);
-              throw err;
-            });
-          }
-        }
-
-        // 6. Sync Uploaded PDF Reports
-        const reportsSnap = await getDocs(collection(db, 'uploadedReports')).catch(err => {
-          handleFirestoreError(err, OperationType.GET, 'uploadedReports');
-          throw err;
-        });
-        if (reportsSnap.size > 0) {
-          const reportsList: any[] = [];
-          reportsSnap.forEach(repDoc => reportsList.push(repDoc.data()));
-          setUploadedReports(reportsList);
-        } else {
-          for (const r of uploadedReports) {
-            await setDoc(doc(db, 'uploadedReports', r.id), r).catch(err => {
-              handleFirestoreError(err, OperationType.WRITE, `uploadedReports/${r.id}`);
-              throw err;
-            });
-          }
-        }
-
-        setCloudSyncStatus('synced');
-      } catch (err: any) {
-        const errMsg = err?.message || String(err);
-        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('kuota') || errMsg.toLowerCase().includes('dibatasi')) {
-          console.warn('Firebase DB sync was suspended due to Spark plan limits. Operating safely in local storage mode.', err);
-          setCloudSyncStatus('local');
-        } else {
-          console.error('Firebase DB sync init failed:', err);
-          setCloudSyncStatus('error');
-        }
-        setCloudErrorMessage(err instanceof Error ? err.message : String(err));
+      if (isManual) {
+        alert("Sinkronisasi dua-arah berhasil! Seluruh nilai, presensi, pengumuman, profil guru, dan berkas raport PDF digital sukses disinkronkan ke Cloud Firestore.");
+      }
+    } catch (err: any) {
+      const errMsg = err?.message || String(err);
+      if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('kuota') || errMsg.toLowerCase().includes('dibatasi')) {
+        console.warn('Firebase DB sync was suspended due to Spark plan limits. Operating safely in local storage mode.', err);
+        setCloudSyncStatus('local');
+      } else {
+        console.error('Firebase DB sync init failed:', err);
+        setCloudSyncStatus('error');
+      }
+      setCloudErrorMessage(err instanceof Error ? err.message : String(err));
+      if (isManual) {
+        alert(`Gagal Sinkronisasi Cloud: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+  };
 
-    loadFirebaseData();
+  // Authenticate & Load/Seed Firebase Firestore
+  useEffect(() => {
+    triggerBilateralSync(false);
   }, []);
 
   // --- Student Portal View Switcher States ---
@@ -1371,34 +1434,43 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
           {/* Cloud Firebase Sync Indicator */}
           <div className="flex items-center space-x-2 mr-2">
             {cloudSyncStatus === 'synced' && (
-              <span className="flex items-center space-x-1 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded border border-emerald-150 text-[11px] font-bold">
+              <button 
+                onClick={() => triggerBilateralSync(true)}
+                title="Sistem tersinkronisasi dengan baik. Klik untuk memicu pengecekan ulang/sinkronisasi instan."
+                className="flex items-center space-x-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded border border-emerald-150 text-[11px] font-bold transition duration-150 cursor-pointer"
+              >
                 <Cloud className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
                 <span>Cloud Terhubung</span>
-              </span>
+              </button>
             )}
             {cloudSyncStatus === 'local' && (
-              <span 
-                className="flex items-center space-x-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-150 text-[11px] font-bold cursor-help animate-pulse"
-                title="Sistem beroperasi dalam mode penyimpanan lokal mandiri & aman karena keterbatasan harian cloud gratis."
+              <button 
+                onClick={() => triggerBilateralSync(true)}
+                className="flex items-center space-x-1 bg-amber-50 hover:bg-amber-100 text-amber-700 px-2.5 py-1 rounded border border-amber-150 text-[11px] font-bold cursor-pointer transition duration-150"
+                title="Beroperasi offline aman demi kuota. Klik di sini untuk memaksa sinkronisasi ke Cloud sekarang."
               >
-                <HardDrive className="w-3.5 h-3.5 text-blue-600" />
-                <span>Penyimpanan Lokal Aktif</span>
-              </span>
+                <HardDrive className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span className="flex items-center space-x-1.5">
+                  <span>Penyimpanan Lokal Aktif</span>
+                  <span className="text-[9px] bg-amber-200 text-amber-850 px-1 py-0.2 rounded font-extrabold uppercase tracking-wide shrink-0 font-sans">Sync</span>
+                </span>
+              </button>
             )}
             {cloudSyncStatus === 'syncing' && (
-              <span className="flex items-center space-x-1 bg-amber-50 text-amber-700 px-2.5 py-1 rounded border border-amber-150 text-[11px] font-bold">
-                <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
-                <span>Menghubungkan...</span>
+              <span className="flex items-center space-x-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-150 text-[11px] font-bold">
+                <RefreshCw className="w-3.5 h-3.5 text-blue-600 animate-spin" />
+                <span>Menyinkronkan...</span>
               </span>
             )}
             {cloudSyncStatus === 'error' && (
-              <span 
-                className="flex items-center space-x-1 bg-rose-50 text-rose-700 px-2.5 py-1 rounded border border-rose-150 text-[11px] font-bold cursor-help"
-                title={cloudErrorMessage || "Koneksi cloud bermasalah"}
+              <button 
+                onClick={() => triggerBilateralSync(true)}
+                className="flex items-center space-x-1 bg-rose-50 hover:bg-rose-100 text-rose-700 px-2.5 py-1 rounded border border-rose-150 text-[11px] font-bold cursor-pointer transition duration-150"
+                title="Koneksi cloud gagal. Klik untuk mencobanya kembali."
               >
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
                 <span>Gagal Sinkronisasi</span>
-              </span>
+              </button>
             )}
           </div>
 
@@ -1456,9 +1528,19 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
               {/* Informative Header with dynamic student selector */}
               <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-extrabold bg-blue-105 bg-blue-100 text-[#00288e] px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    Portal Siswa & Wali Murid
-                  </span>
+                  <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                    <span className="text-[10px] font-extrabold bg-blue-100 text-[#00288e] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                      Portal Siswa & Wali Murid
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsHelpOpen(true)}
+                      className="text-[10px] font-extrabold text-[#00288e] bg-blue-50 border border-blue-150 px-2.5 py-1 rounded-full hover:bg-blue-100 transition inline-flex items-center space-x-1 cursor-pointer animate-pulse shrink-0"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-[#00288e]" />
+                      <span>Petunjuk HP 📱</span>
+                    </button>
+                  </div>
                   <h3 className="text-xl font-bold text-gray-900 mt-2 font-sans border-none">
                     Selamat Datang di WaliKu Digital
                   </h3>
@@ -3285,115 +3367,207 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
 
           {/* VIEW 5: SETTINGS / PENGATURAN */}
           {activeTab === 'settings' && (
-            <div className="bg-white border border-gray-250 p-8 rounded-lg shadow-sm text-left max-w-3xl space-y-6">
-              <div>
-                <h4 className="text-base font-bold text-gray-950">Pengaturan Data Kelas & Guru</h4>
-                <p className="text-xs text-gray-500">Konfigurasi profile ini akan otomatis diwariskan ke format cetakan Raport Online.</p>
-              </div>
-
-              <form onSubmit={handleSaveProfile} className="space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Nama Lengkap Guru (Wali)</label>
-                    <input
-                      type="text"
-                      className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
-                      value={profile.name}
-                      onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Gelar / Jabatan</label>
-                    <input
-                      type="text"
-                      className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
-                      value={profile.role}
-                      onChange={(e) => setProfile({ ...profile, role: e.target.value })}
-                    />
-                  </div>
+            <div className="space-y-6 max-w-3xl text-left">
+              {/* Profile Card */}
+              <div className="bg-white border border-gray-250 p-8 rounded-lg shadow-sm">
+                <div>
+                  <h4 className="text-base font-bold text-gray-950">Pengaturan Data Kelas & Guru</h4>
+                  <p className="text-xs text-gray-500">Konfigurasi profile ini akan otomatis diwariskan ke format cetakan Raport Online.</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Instansi / Sekolah</label>
-                    <input
-                      type="text"
-                      className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
-                      value={profile.school}
-                      onChange={(e) => setProfile({ ...profile, school: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Nama Kelas Binaan</label>
-                    <input
-                      type="text"
-                      className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
-                      value={profile.className}
-                      onChange={(e) => setProfile({ ...profile, className: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-gray-700 uppercase">Tahun Ajaran</label>
-                    <input
-                      type="text"
-                      className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
-                      value={profile.academicYear}
-                      onChange={(e) => setProfile({ ...profile, academicYear: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                {/* Keamanan & Proteksi Akses Guru */}
-                <div className="pt-4 border-t border-gray-150 text-left">
-                  <h5 className="text-xs font-extrabold text-slate-400 block uppercase tracking-wider mb-2">Keamanan & Proteksi Akses Guru</h5>
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-4">
-                    <div className="flex items-start space-x-3">
-                      <div className="flex items-center h-5">
-                        <input
-                          id="isPinLocked"
-                          type="checkbox"
-                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
-                          checked={profile.isPinLocked !== false}
-                          onChange={(e) => setProfile({ ...profile, isPinLocked: e.target.checked })}
-                        />
-                      </div>
-                      <div className="text-sm text-left">
-                        <label htmlFor="isPinLocked" className="font-bold text-gray-800 cursor-pointer select-none block">Kunci Akses kembali ke Mode Guru</label>
-                        <p className="text-gray-500 text-[11px] leading-tight">Mencegah siswa atau orang tua beralih kembali dari Portal Siswa ke halaman pengelolaan data dan nilai guru.</p>
-                      </div>
+                <form onSubmit={handleSaveProfile} className="space-y-5 mt-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-700 uppercase">Nama Lengkap Guru (Wali)</label>
+                      <input
+                        type="text"
+                        className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
+                        value={profile.name}
+                        onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+                      />
                     </div>
 
-                    {(profile.isPinLocked !== false) && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200/60">
-                        <div className="space-y-1.5 text-left">
-                          <label className="text-[11px] font-bold text-gray-700 uppercase block">PIN / Sandi Pengaman (Mode Guru)</label>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-700 uppercase">Gelar / Jabatan</label>
+                      <input
+                        type="text"
+                        className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
+                        value={profile.role}
+                        onChange={(e) => setProfile({ ...profile, role: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-700 uppercase">Instansi / Sekolah</label>
+                      <input
+                        type="text"
+                        className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
+                        value={profile.school}
+                        onChange={(e) => setProfile({ ...profile, school: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-700 uppercase">Nama Kelas Binaan</label>
+                      <input
+                        type="text"
+                        className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
+                        value={profile.className}
+                        onChange={(e) => setProfile({ ...profile, className: e.target.value })}
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-gray-700 uppercase">Tahun Ajaran</label>
+                      <input
+                        type="text"
+                        className="block w-full text-sm border-gray-300 rounded border p-2.5 bg-white"
+                        value={profile.academicYear}
+                        onChange={(e) => setProfile({ ...profile, academicYear: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Keamanan & Proteksi Akses Guru */}
+                  <div className="pt-4 border-t border-gray-150 text-left">
+                    <h5 className="text-xs font-extrabold text-slate-400 block uppercase tracking-wider mb-2">Keamanan & Proteksi Akses Guru</h5>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-4">
+                      <div className="flex items-start space-x-3">
+                        <div className="flex items-center h-5">
                           <input
-                            type="text"
-                            maxLength={10}
-                            className="block w-full text-xs font-mono border-gray-300 rounded border p-2 bg-white max-w-[200px]"
-                            value={profile.teacherPin || '1234'}
-                            onChange={(e) => setProfile({ ...profile, teacherPin: e.target.value })}
+                            id="isPinLocked"
+                            type="checkbox"
+                            className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                            checked={profile.isPinLocked !== false}
+                            onChange={(e) => setProfile({ ...profile, isPinLocked: e.target.checked })}
                           />
-                          <p className="text-[10px] text-gray-400">PIN bawaan awal adalah <strong className="font-mono text-gray-600">1234</strong>. Anda bisa mengubahnya sesuka hati.</p>
+                        </div>
+                        <div className="text-sm text-left">
+                          <label htmlFor="isPinLocked" className="font-bold text-gray-800 cursor-pointer select-none block">Kunci Akses kembali ke Mode Guru</label>
+                          <p className="text-gray-500 text-[11px] leading-tight">Mencegah siswa atau orang tua beralih kembali dari Portal Siswa ke halaman pengelolaan data dan nilai guru.</p>
                         </div>
                       </div>
-                    )}
+
+                      {(profile.isPinLocked !== false) && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200/60">
+                          <div className="space-y-1.5 text-left">
+                            <label className="text-[11px] font-bold text-gray-700 uppercase block">PIN / Sandi Pengaman (Mode Guru)</label>
+                            <input
+                              type="text"
+                              maxLength={10}
+                              className="block w-full text-xs font-mono border-gray-300 rounded border p-2 bg-white max-w-[200px]"
+                              value={profile.teacherPin || '1234'}
+                              onChange={(e) => setProfile({ ...profile, teacherPin: e.target.value })}
+                            />
+                            <p className="text-[10px] text-gray-400">PIN bawaan awal adalah <strong className="font-mono text-gray-600">1234</strong>. Anda bisa mengubahnya sesuka hati.</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  <div className="pt-4 border-t border-gray-100 flex justify-end">
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 bg-[#00288e] hover:bg-[#1e40af] text-white text-sm font-semibold rounded-[4px] shadow flex items-center space-x-1.5 cursor-pointer"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>Simpan Perubahan</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* KARTU SINKRONISASI CLOUD & MULTI-PERANGKAT */}
+              <div className="bg-white border border-gray-250 p-8 rounded-lg shadow-sm text-left space-y-6">
+                <div>
+                  <h4 className="text-base font-bold text-gray-950 flex items-center space-x-2">
+                    <Cloud className="w-5 h-5 text-blue-700 shrink-0" />
+                    <span>Sinkronisasi Multi-Perangkat (Cloud Sync)</span>
+                  </h4>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Pastikan data, sesi login siswa, dan berkas scan raport PDF tersinkronisasi secara real-time antara laptop guru dan HP siswa.
+                  </p>
                 </div>
 
-                <div className="pt-4 border-t border-gray-100 flex justify-end">
+                <div className="p-4 rounded-lg border border-slate-200 bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Status Koneksi Database</span>
+                    <div className="flex items-center space-x-2">
+                      {cloudSyncStatus === 'synced' && (
+                        <>
+                          <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-150 px-2 py-0.5 rounded">Tersinkronisasi Cloud</span>
+                        </>
+                      )}
+                      {cloudSyncStatus === 'syncing' && (
+                        <>
+                          <span className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-ping" />
+                          <span className="text-xs font-bold text-blue-700 bg-blue-50 border border-blue-150 px-2 py-0.5 rounded flex items-center space-x-1">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                            <span>Menyinkronkan...</span>
+                          </span>
+                        </>
+                      )}
+                      {cloudSyncStatus === 'local' && (
+                        <>
+                          <span className="w-2.5 h-2.5 bg-amber-500 rounded-full animate-pulse" />
+                          <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-150 px-2 py-0.5 rounded flex items-center space-x-1">
+                            <HardDrive className="w-3 h-3 shrink-0" />
+                            <span>Penyimpanan Lokal Aktif</span>
+                          </span>
+                        </>
+                      )}
+                      {cloudSyncStatus === 'error' && (
+                        <>
+                          <span className="w-2.5 h-2.5 bg-rose-500 rounded-full" />
+                          <span className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-150 px-2 py-0.5 rounded flex items-center space-x-1">
+                            <AlertTriangle className="w-3 h-3 shrink-0" />
+                            <span>Gangguan Koneksi Cloud</span>
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-500 block">
+                      {cloudSyncStatus === 'local' 
+                        ? 'Beroperasi secara offline demi menjaga durabilitas data dari kuota Spark Plan.' 
+                        : 'Sesi cloud aktif. Seluruh data dan edit nilai disimpan dua-arah secara berkala.'}
+                    </span>
+                  </div>
+
                   <button
-                    type="submit"
-                    className="px-5 py-2.5 bg-[#00288e] hover:bg-[#1e40af] text-white text-sm font-semibold rounded-[4px] shadow flex items-center space-x-1.5 cursor-pointer"
+                    onClick={() => triggerBilateralSync(true)}
+                    disabled={cloudSyncStatus === 'syncing'}
+                    className={`px-5 py-2.5 rounded text-xs font-bold flex items-center justify-center space-x-2 cursor-pointer transition shadow-xs ${
+                      cloudSyncStatus === 'syncing'
+                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-305'
+                        : 'bg-gradient-to-r from-blue-700 to-[#00288e] hover:brightness-110 text-white border border-[#00288e]'
+                    }`}
                   >
-                    <Save className="w-4 h-4" />
-                    <span>Simpan Perubahan</span>
+                    <RefreshCw className={`w-3.5 h-3.5 ${cloudSyncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                    <span>Sinkronisasikan Sekarang</span>
                   </button>
                 </div>
-              </form>
+
+                <div className="border border-indigo-150 bg-indigo-50/20 rounded-lg p-4 space-y-3">
+                  <h5 className="text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
+                    <span className="bg-indigo-100 text-indigo-700 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-extrabold">💡</span>
+                    <span>Petunjuk Sinkronisasi Multi-Perangkat (Laptop ke HP)</span>
+                  </h5>
+                  <ul className="text-[11px] text-slate-600 space-y-2 list-none pl-0">
+                    <li className="flex items-start">
+                      <span className="text-indigo-600 font-bold mr-1.5 shrink-0">•</span>
+                      <span><strong>Di Laptop (Wali Kelas)</strong>: Silakan lakukan semua proses edit nilai, tambah pengumuman, perbarui presensi, dan <strong>unggah dokumen PDF scan raport siswa</strong> di laptop Anda. Setelah selesai, klik tombol <strong>"Sinkronisasikan Sekarang"</strong> di atas. Ini akan secara cerdas mengunggah perubahan dan berkas ke Cloud Firestore.</span>
+                    </li>
+                    <li className="flex items-start">
+                      <span className="text-indigo-600 font-bold mr-1.5 shrink-0">•</span>
+                      <span><strong>Di Handphone / Wali Murid & Siswa</strong>: Siswa dapat masuk menggunakan NISN mereka di handphone masing-masing. Karena data di cloud sudah terisi, siswa akan dapat melihat <strong>status raport digital terbaru</strong> dan langsung mengunduh/membuka <strong>dokumen PDF resmi</strong> yang telah Anda bagikan.</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
           </>
@@ -4309,6 +4483,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
         )}
       </AnimatePresence>
 
+      <MobileHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }

@@ -25,12 +25,14 @@ import { db } from '../lib/firebase';
 import { Student } from '../types';
 import { INITIAL_STUDENTS } from '../data';
 import studentImg from '../assets/images/student_login_preview_1781192210124.jpg';
+import MobileHelpModal from './MobileHelpModal';
 
 interface LoginFormProps {
   onLoginSuccess: (email: string, role?: string, studentId?: string) => void;
 }
 
 export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   // --- Teacher Login States ---
   const [teacherEmail, setTeacherEmail] = useState('');
   const [teacherPassword, setTeacherPassword] = useState('');
@@ -218,6 +220,31 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
           <p className="text-sm text-gray-500 max-w-2xl mx-auto leading-relaxed">
             Pusat administrasi mandiri guru wali kelas, pendidik, siswa, serta akses pantau nilai transparan bagi bapak/ibu orang tua murid.
           </p>
+        </div>
+
+        {/* Informative Help Banner for Mobile/HP Users */}
+        <div className="bg-indigo-50/70 border border-indigo-150 p-4.5 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 text-left max-w-4xl mx-auto shadow-xs">
+          <div className="flex items-start space-x-3.5">
+            <div className="w-10 h-10 bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center text-indigo-700 shrink-0">
+              <HelpCircle className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-xs font-bold text-indigo-950 flex items-center space-x-1.5">
+                <span>Mengakses Raport via HP / Handphone?</span>
+                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-extrabold px-1.5 py-0.2 rounded uppercase shrink-0">Disarankan</span>
+              </h4>
+              <p className="text-[11px] text-slate-550 text-slate-600 mt-1 leading-relaxed">
+                Supaya tidak bingung saat login pertama kali, silakan baca petunjuk pendaftaran NISN, cara masuk, serta bagaimana melihat file PDF scan raport resmi wali kelas secara responsif.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsHelpOpen(true)}
+            className="px-4 py-2.5 bg-gradient-to-r from-blue-700 to-[#00288e] hover:brightness-110 text-white text-xs font-bold rounded shadow-sm flex items-center space-x-1.5 shrink-0 transition duration-150 cursor-pointer border border-[#00288e]"
+          >
+            <span>Petunjuk Akses HP 📱</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {/* Dynamic Multi-Column Grid */}
@@ -408,13 +435,24 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
                   <div className="w-7 h-7 bg-blue-50 text-[#00288e] rounded flex items-center justify-center font-bold text-xs border border-blue-100">
                     W
                   </div>
-                  <div>
-                    <h3 className="text-base font-black text-gray-900">
-                      Selamat Datang, Siswa
-                    </h3>
-                    <p className="text-[11px] text-gray-500">
-                      Silakan masukkan akun belajarmu
-                    </p>
+                  <div className="flex items-center justify-between w-full">
+                    <div>
+                      <h3 className="text-base font-black text-gray-900 border-none">
+                        Selamat Datang, Siswa
+                      </h3>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        Silakan masukkan akun belajarmu
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsHelpOpen(true)}
+                      className="text-[10px] font-extrabold text-blue-700 bg-blue-50 hover:bg-blue-105 border border-blue-150 px-2.2 py-1.2 rounded inline-flex items-center space-x-1 transition cursor-pointer shrink-0"
+                      title="Klik untuk membuka panduan HP/smartphone"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>Bantuan HP 📱</span>
+                    </button>
                   </div>
                 </div>
 
@@ -565,6 +603,8 @@ export default function LoginForm({ onLoginSuccess }: LoginFormProps) {
         </div>
 
       </div>
+
+      <MobileHelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </section>
   );
 }
