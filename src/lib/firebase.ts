@@ -63,7 +63,13 @@ export interface FirestoreErrorInfo {
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errMsg = error instanceof Error ? error.message : String(error);
-  const isQuotaExceeded = errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit exceeded') || errMsg.toLowerCase().includes('exceeded');
+  const isQuotaExceeded = 
+    errMsg.toLowerCase().includes('quota') || 
+    errMsg.toLowerCase().includes('limit') || 
+    errMsg.toLowerCase().includes('exceeded') || 
+    errMsg.toLowerCase().includes('kuota') || 
+    errMsg.toLowerCase().includes('dibatasi') ||
+    errMsg.toLowerCase().includes('terlampaui');
   
   const errInfo: FirestoreErrorInfo = {
     error: errMsg,
@@ -88,7 +94,10 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       `Sistem secara aman beralih ke Mode Penyimpanan Lokal (LocalStorage & IndexedDB) secara transparan agar aplikasi tetap dapat digunakan secara optimal.\n` +
       `Catatan: Kuota baca/tulis gratis harian Firebase Spark akan otomatis di-reset besok.`
     );
-    throw new Error(`Koneksi cloud dibatasi oleh kuota gratis Firebase (Spark Plan). Penyimpanan lokal telah diaktifkan secara aman.`);
+    if (operationType === OperationType.GET || operationType === OperationType.LIST) {
+      throw new Error(`Koneksi cloud dibatasi oleh kuota gratis Firebase (Spark Plan). Penyimpanan lokal telah diaktifkan secara aman.`);
+    }
+    return;
   } else {
     console.error('Firestore Error Detailed: ', JSON.stringify(errInfo));
     throw new Error(JSON.stringify(errInfo));

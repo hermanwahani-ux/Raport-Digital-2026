@@ -77,7 +77,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
   const [activeTab, setActiveTab] = useState<'overview' | 'announcements' | 'grades' | 'attendance' | 'settings' | 'subject_grades'>('overview');
 
   // --- Cloud Firebase Sync States ---
-  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error'>('syncing');
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'local'>('syncing');
   const [cloudErrorMessage, setCloudErrorMessage] = useState<string | null>(null);
 
   // --- Subject Grades Inbox States ---
@@ -110,7 +110,7 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
         handleFirestoreError(error, OperationType.LIST, path);
       } catch (wrappedError: any) {
         const errMsg = wrappedError?.message || String(wrappedError);
-        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('kuota') || errMsg.toLowerCase().includes('dibatasi')) {
           console.warn("Firestore subscription quota limits reached. Operating in offline/local recipient mode gracefully.");
         } else {
           console.error("Gagal memuat Nilai Mapel Masuk:", error);
@@ -451,12 +451,13 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
         setCloudSyncStatus('synced');
       } catch (err: any) {
         const errMsg = err?.message || String(err);
-        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit')) {
-          console.warn('Firebase DB sync was suspended due to Spark plan limits. Operating safely in local recipient storage mode.', err);
+        if (errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit') || errMsg.toLowerCase().includes('kuota') || errMsg.toLowerCase().includes('dibatasi')) {
+          console.warn('Firebase DB sync was suspended due to Spark plan limits. Operating safely in local storage mode.', err);
+          setCloudSyncStatus('local');
         } else {
           console.error('Firebase DB sync init failed:', err);
+          setCloudSyncStatus('error');
         }
-        setCloudSyncStatus('error');
         setCloudErrorMessage(err instanceof Error ? err.message : String(err));
       }
     }
@@ -1373,6 +1374,15 @@ export default function Dashboard({ userEmail, onLogout, teacherAvatar, onAvatar
               <span className="flex items-center space-x-1 bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded border border-emerald-150 text-[11px] font-bold">
                 <Cloud className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
                 <span>Cloud Terhubung</span>
+              </span>
+            )}
+            {cloudSyncStatus === 'local' && (
+              <span 
+                className="flex items-center space-x-1 bg-blue-50 text-blue-700 px-2.5 py-1 rounded border border-blue-150 text-[11px] font-bold cursor-help animate-pulse"
+                title="Sistem beroperasi dalam mode penyimpanan lokal mandiri & aman karena keterbatasan harian cloud gratis."
+              >
+                <HardDrive className="w-3.5 h-3.5 text-blue-600" />
+                <span>Penyimpanan Lokal Aktif</span>
               </span>
             )}
             {cloudSyncStatus === 'syncing' && (
